@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-// Single document holding the latest computed leaderboards. Written daily by the Render Cron Job
+// Single document holding the latest computed leaderboards. Written hourly by the Render Cron Job
 // (scripts/retrieveLeaderboardData.js) and read by GET /leaderboardData.json, so the
 // memory-constrained web service never runs the heavy account scan itself. `payload` mirrors the JSON
 // the frontend (Leaderboards.jsx) expects: { seasonalLeaderboardElo, seasonalLeaderboardXP,
@@ -9,6 +9,7 @@ const Leaderboard = new mongoose.Schema({
   _id: String, // always "current"
   payload: mongoose.Schema.Types.Mixed,
   updatedAt: Date,
+  dailyUpdatedAt: Date, // Daily gain boards/baselines roll once per 09:00 UTC period, not every refresh.
 });
 
 module.exports = mongoose.model("Leaderboard", Leaderboard);

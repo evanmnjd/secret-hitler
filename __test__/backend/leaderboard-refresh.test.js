@@ -21,6 +21,7 @@ const player = (username, overrides = {}) => ({
 // cron, await each row, and retain account mutations so rerun/baseline behavior is observable.
 const database = (accounts) => {
   const saved = [];
+  let snapshot = null;
   for (const account of accounts) {
     account.save = jest.fn(async () => {
       await Promise.resolve();
@@ -45,6 +46,13 @@ const database = (accounts) => {
                     .map((key) => [key, row[key]])
                 )
               : row;
+            if (filter.lastCompletedGame && projection) {
+              document.save = async () => {
+                row.previousDayElo = document.previousDayElo;
+                row.previousDayXP = document.previousDayXP;
+                return row.save();
+              };
+            }
             await visit(document);
           }
         },
@@ -52,8 +60,15 @@ const database = (accounts) => {
     };
     return query;
   });
-  const publish = jest.spyOn(Leaderboard, "findByIdAndUpdate").mockResolvedValue({});
-  return { saved, find, publish };
+  const read = jest.spyOn(Leaderboard, "findById").mockImplementation(() => ({
+    select: () => ({ lean: () => Promise.resolve(snapshot) }),
+  }));
+  const storeSnapshot = (data) => (snapshot = data);
+  const publish = jest.spyOn(Leaderboard, "findByIdAndUpdate").mockImplementation(async (_id, data) => {
+    storeSnapshot(data);
+    return {};
+  });
+  return { saved, find, publish, read, storeSnapshot, snapshot: () => snapshot };
 };
 const names = (board) => board.map((entry) => entry.userName);
 const refresh = (log = jest.fn()) => refreshLeaderboards({ nowMs, log });
@@ -84,7 +99,11 @@ it("publishes exactly the qualified Season Elo set without a score floor or life
   const data = await refresh();
   expect(names(data.seasonalLeaderboardElo)).toEqual(["at-twenty", "at-boundary", "below-start", "zero", "negative"]);
   expect(find.mock.calls[1][1]).toMatchObject({ [fields.wins]: 1, [fields.losses]: 1, lastRankedGameAt: 1 });
-  expect(publish).toHaveBeenCalledWith("current", { payload: data, updatedAt: new Date(nowMs) }, { upsert: true });
+  expect(publish).toHaveBeenCalledWith(
+    "current",
+    { payload: data, updatedAt: new Date(nowMs), dailyUpdatedAt: new Date(nowMs) },
+    { upsert: true }
+  );
   rows.forEach((row, i) => {
     expect({
       eloSeason: row.eloSeason,
@@ -108,14 +127,15 @@ it("restores the seasonal row on the next refresh after ranked play, but not aft
   row.isRainbowOverall = true;
   const casual = await refresh();
   expect(casual.seasonalLeaderboardElo).toEqual([]);
-  expect(names(casual.dailyLeaderboardXP)).toEqual([row.username]);
+  expect(casual.dailyLeaderboardXP).toEqual([]); // Daily gains remain the last 09:00 UTC snapshot.
+  expect(names(casual.seasonalLeaderboardXP)).toEqual([row.username]);
   // A result can arrive after this refresh captured its clock but before the row is scanned.
   row.lastRankedGameAt = new Date(nowMs + 1);
   row[fields.wins]++;
   expect(names((await refresh()).seasonalLeaderboardElo)).toEqual([row.username]);
 });
 
-it("uses 1600/0 absent baselines, preserves zero/negative baselines and rolls before publication", async () => {
+it("uses 1600/0 absent baselines, preserves zero/negative baselines and rolls only once per daily period", async () => {
   const rows = [
     player("launch"),
     player("first-win", { eloSeason: 1620, xpSeason: 2 }),
@@ -125,9 +145,10 @@ it("uses 1600/0 absent baselines, preserves zero/negative baselines and rolls be
     player("banned", { isBanned: true }),
     player("old-activity", { lastCompletedGame: new Date(nowMs - day - 1), previousDayElo: 1200 }),
   ];
-  const { saved, find, publish } = database(rows);
-  publish.mockImplementation(async () => {
+  const { saved, find, publish, storeSnapshot } = database(rows);
+  publish.mockImplementation(async (_id, snapshot) => {
     expect(saved).toHaveLength(6);
+    storeSnapshot(snapshot);
   });
   const data = await refresh();
   expect(data.dailyLeaderboardElo.find((row) => row.userName === "launch").dailyEloDifference).toBe(0);
@@ -141,8 +162,9 @@ it("uses 1600/0 absent baselines, preserves zero/negative baselines and rolls be
   expect(rows[6].previousDayElo).toBe(1200);
   publish.mockResolvedValue({});
   const second = await refresh();
-  expect(second.dailyLeaderboardElo.every((row) => row.dailyEloDifference === 0)).toBe(true);
-  expect(second.dailyLeaderboardXP.every((row) => row.dailyXPDifference === 0)).toBe(true);
+  expect(second.dailyLeaderboardElo).toEqual(data.dailyLeaderboardElo);
+  expect(second.dailyLeaderboardXP).toEqual(data.dailyLeaderboardXP);
+  expect(saved).toHaveLength(6);
 });
 
 it("retains XP and recent Rainbow as progression boards, including nonranked players", async () => {
@@ -234,4 +256,87 @@ it("rejects a failed snapshot write and rejects an invalid clock before querying
   find.mockClear();
   await expect(refreshLeaderboards({ nowMs: NaN })).rejects.toThrow("clock");
   expect(find).not.toHaveBeenCalled();
+});
+
+it("refreshes progression standings hourly without resaving accounts or shortening the daily gain window", async () => {
+  const row = player("active", { eloSeason: 1620, xpSeason: 12 });
+  const { saved, find, snapshot } = database([row]);
+  const first = await refresh();
+  row.eloSeason = 1640;
+  row.xpSeason = 17;
+  row.isRainbowOverall = true;
+  row.dateRainbowOverall = new Date(nowMs + 3600000);
+  find.mockClear();
+  const next = await refreshLeaderboards({ nowMs: nowMs + 3600000, log: jest.fn() });
+  expect(next.seasonalLeaderboardElo).toEqual([{ userName: row.username, elo: 1640 }]);
+  expect(next.seasonalLeaderboardXP).toEqual([{ userName: row.username, xp: 17 }]);
+  expect(names(next.rainbowLeaderboard)).toEqual([row.username]);
+  expect(next.dailyLeaderboardElo).toEqual(first.dailyLeaderboardElo);
+  expect(next.dailyLeaderboardXP).toEqual(first.dailyLeaderboardXP);
+  expect(saved).toEqual([row.username]);
+  expect(row.previousDayElo).toBe(1620);
+  expect(row.previousDayXP).toBe(12);
+  expect(find).toHaveBeenCalledTimes(1);
+  expect(find.mock.calls[0][1]).not.toHaveProperty("games");
+  expect(snapshot().dailyUpdatedAt).toEqual(new Date(nowMs));
+  expect(snapshot().updatedAt).toEqual(new Date(nowMs + 3600000));
+});
+
+it("rolls at 09:00 UTC rather than midnight and retains the result on same-period retries", async () => {
+  const row = player("active", { eloSeason: 1620, xpSeason: 12 });
+  const { saved } = database([row]);
+  const first = await refresh();
+  row.eloSeason = 1660;
+  row.xpSeason = 20;
+  const beforeReset = Date.parse("2026-09-09T08:59:59Z");
+  row.lastCompletedGame = new Date(beforeReset);
+  const before = await refreshLeaderboards({ nowMs: beforeReset, log: jest.fn() });
+  expect(before.dailyLeaderboardElo).toEqual(first.dailyLeaderboardElo);
+  expect(saved).toHaveLength(1);
+  const atReset = beforeReset + 1000;
+  const next = await refreshLeaderboards({ nowMs: atReset, log: jest.fn() });
+  expect(next.dailyLeaderboardElo).toEqual([{ userName: row.username, dailyEloDifference: 40 }]);
+  expect(next.dailyLeaderboardXP).toEqual([{ userName: row.username, dailyXPDifference: 8 }]);
+  expect(saved).toHaveLength(2);
+  expect((await refreshLeaderboards({ nowMs: atReset, log: jest.fn() })).dailyLeaderboardElo).toEqual(
+    next.dailyLeaderboardElo
+  );
+  expect(saved).toHaveLength(2);
+});
+
+it("uses a legacy daily snapshot's timestamp instead of resetting gains on deployment", async () => {
+  const row = player("active", { eloSeason: 1700 });
+  const { saved, storeSnapshot } = database([row]);
+  const oldDaily = [{ userName: "legacy", dailyEloDifference: 75 }];
+  const dailyAt = new Date("2026-09-08T09:00:00Z");
+  storeSnapshot({ payload: { ...Leaderboard.freshBoard(), dailyLeaderboardElo: oldDaily }, updatedAt: dailyAt });
+  const data = await refresh();
+  expect(data.dailyLeaderboardElo).toEqual(oldDaily);
+  expect(saved).toEqual([]);
+  expect(row.previousDayElo).toBeUndefined();
+});
+
+it("does not advance the saved daily marker on a failed intraday publication or reset baselines on retry", async () => {
+  const row = player("active", { eloSeason: 1620, xpSeason: 12 });
+  const { saved, publish, snapshot } = database([row]);
+  const first = await refresh();
+  const published = snapshot();
+  publish.mockRejectedValueOnce(new Error("snapshot unavailable"));
+  await expect(refreshLeaderboards({ nowMs: nowMs + 3600000, log: jest.fn() })).rejects.toThrow("snapshot unavailable");
+  expect(snapshot()).toBe(published);
+  expect(snapshot().dailyUpdatedAt).toEqual(new Date(nowMs));
+  const retry = await refreshLeaderboards({ nowMs: nowMs + 3600000, log: jest.fn() });
+  expect(retry.dailyLeaderboardElo).toEqual(first.dailyLeaderboardElo);
+  expect(saved).toEqual([row.username]);
+});
+
+it("fails before scanning or rolling account baselines when the saved snapshot cannot be read", async () => {
+  const { saved, find, publish, read } = database([player("active")]);
+  read.mockImplementation(() => ({
+    select: () => ({ lean: () => Promise.reject(new Error("snapshot unavailable")) }),
+  }));
+  await expect(refresh()).rejects.toThrow("snapshot unavailable");
+  expect(saved).toEqual([]);
+  expect(find).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
 });

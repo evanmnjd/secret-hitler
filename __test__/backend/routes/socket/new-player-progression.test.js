@@ -437,13 +437,24 @@ it("includes Practice-only XP in the daily refresh and rolls its baseline withou
       cursor: () => ({
         eachAsync: async (visit) => {
           for (const row of rows)
-            await visit(projection ? _.pick(row, Object.keys(projection)) : Account.hydrate(_.cloneDeep(row)));
+            await visit(
+              filter.lastCompletedGame
+                ? Account.hydrate(projection ? _.pick(row, ["_id", ...Object.keys(projection)]) : _.cloneDeep(row))
+                : _.pick(row, Object.keys(projection))
+            );
         },
       }),
     };
     return query;
   });
-  const publish = jest.spyOn(Leaderboard, "findByIdAndUpdate").mockResolvedValue({});
+  let snapshot = null;
+  const read = jest.spyOn(Leaderboard, "findById").mockImplementation(() => ({
+    select: () => ({ lean: () => Promise.resolve(snapshot) }),
+  }));
+  const publish = jest.spyOn(Leaderboard, "findByIdAndUpdate").mockImplementation(async (_id, data) => {
+    snapshot = data;
+    return {};
+  });
   try {
     const first = await refreshLeaderboards({ nowMs: now, log: jest.fn() });
     expect(first.dailyLeaderboardXP).toHaveLength(5);
@@ -460,9 +471,10 @@ it("includes Practice-only XP in the daily refresh and rolls its baseline withou
     expect(first.seasonalLeaderboardElo).toEqual([]);
     const second = await refreshLeaderboards({ nowMs: now, log: jest.fn() });
     expect(second.dailyLeaderboardXP).toHaveLength(5);
-    expect(second.dailyLeaderboardXP.every((row) => row.dailyXPDifference === 0)).toBe(true);
+    expect(second.dailyLeaderboardXP).toEqual(first.dailyLeaderboardXP);
     expect(second.seasonalLeaderboardElo).toEqual([]);
   } finally {
+    read.mockRestore();
     publish.mockRestore();
   }
 });

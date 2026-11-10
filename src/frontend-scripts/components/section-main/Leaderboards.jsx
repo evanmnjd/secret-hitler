@@ -72,8 +72,8 @@ class Leaderboard extends React.Component {
             <time dateTime={updatedAt.toISOString()} title={updatedAt.format("LLLL")}>
               {updatedAt.fromNow()}
             </time>
-            . Standings refresh daily.
-            {moment().diff(updatedAt, "hours", true) > 36 && " These standings are waiting for a fresh update."}
+            . Seasonal and Rainbow standings refresh hourly. Daily gains refresh at 09:00 UTC.
+            {moment().diff(updatedAt, "hours", true) > 3 && " These standings are waiting for a fresh update."}
           </p>
         )}
         {this.state.loading ? (
@@ -191,7 +191,7 @@ class Leaderboard extends React.Component {
             <p>
               {this.state.status === "pending"
                 ? "Standings have not been published yet."
-                : "Standings appear after the next daily update when players qualify."}
+                : "Standings appear after the next update when players qualify."}
             </p>
           </>
         )}
