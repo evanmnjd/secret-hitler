@@ -114,7 +114,8 @@ services:
       - key: GETIPINTELAPIEMAIL
         sync: false
 
-  # Daily leaderboard generation. A SEPARATE Cron service (not the web app) for two reasons:
+  # Hourly standings refresh; daily gain boards/baselines still roll once at 09:00 UTC.
+  # A SEPARATE Cron service (not the web app) for two reasons:
   # (1) a Render Persistent Disk attaches to one service, so a cron can't share the web's cardbacks
   # disk; (2) the web instance is memory-tight, so the heavy account scan must not run in-process.
   # It writes the result to Mongo (a single `leaderboards` doc); the web serves it at
@@ -124,7 +125,7 @@ services:
     runtime: node
     region: virginia # same region as Atlas/Redis for low-latency access
     plan: starter
-    schedule: "0 9 * * *" # daily at 09:00 UTC (off-peak); adjust as desired
+    schedule: "0 * * * *" # hourly; expensive baseline writes remain daily, outside the web process
     buildCommand: pnpm install --prod=false
     startCommand: node scripts/retrieveLeaderboardData.js
     envVars:
