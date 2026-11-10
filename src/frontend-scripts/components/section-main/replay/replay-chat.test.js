@@ -100,7 +100,7 @@ describe("replay chat switching", () => {
     const wrapper = shallow(<ReplayWrapper replay={ready()} userInfo={{}} userList={{ list: [] }} to={jest.fn()} />, {
       disableLifecycleMethods: true,
     });
-    wrapper.find(".displaychats").simulate("click");
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
     expect(wrapper.find("Replay").dive().find(ConnectedReplayGamechat)).toHaveLength(1);
     expect(wrapper.find("Replay").dive().find("ReplayControls")).toHaveLength(0);
   });
