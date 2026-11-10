@@ -32,8 +32,36 @@ describe("Tracks", () => {
     expect(popup.prop("trigger").type).toBe("i");
     expect(popup.prop("inverted")).toBe(true);
     expect(popup.prop("content")).toBe(
-      "Neighbor Chat - /l and /r message your nearest living neighbor to the left or right; messages are visible only to you, your neighbor, and authorized moderators, including after the game."
+      "Neighbor Chat (always casual) - /l and /r message your nearest living neighbor to the left or right, or use their seat number (for example /4); messages are visible only to you, your neighbor, and authorized moderators, including after the game."
     );
+  });
+
+  it.each([
+    [60, 1600, ["Timed Mode: 1: 00", "Elo minimum: 1600"]],
+    [false, 1600, ["Elo minimum: 1600"]],
+    [60, null, ["Timed Mode: 1: 00"]],
+  ])("keeps timer and Elo requirements after all mode icons (timer: %s, Elo: %s)", (timedMode, eloMinimum, trailing) => {
+    const component = renderTracks({
+      neighborChat: true,
+      timedMode,
+      eloMinimum,
+      xpMinimum: 10,
+      isVerifiedOnly: true,
+      flappyMode: true,
+      unlistedGame: true,
+    });
+    const labels = component
+      .find(".option-icons")
+      .find(Popup)
+      .map((popup) => popup.prop("content"));
+    expect(labels.slice(-trailing.length)).toEqual(trailing);
+    expect(labels.slice(0, -trailing.length).some((label) => label.startsWith("Neighbor Chat"))).toBe(true);
+  });
+
+  it("labels silent Neighbor Chat games as disabling public chat only", () => {
+    const component = renderTracks({ neighborChat: true, playerChats: "disabled" });
+    const popup = component.find(Popup).filterWhere((item) => item.prop("trigger").props.className === "mute icon");
+    expect(popup.prop("content")).toBe("Public Player Chat Disabled - Neighbor Chat Enabled");
   });
 
   it.each([false, undefined])("omits the Neighbor Chat icon and tooltip when the flag is %s", (neighborChat) => {

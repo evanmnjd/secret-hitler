@@ -11,6 +11,39 @@ class Changelog extends React.Component {
           <h2>Changelog</h2>
         </div>
 
+        <div className="ui header">
+          <p>Season 25.1 update</p>
+        </div>
+        <ul>
+          <li>
+            <strong>New Player Game fixed:</strong> Opening the New Player Game no longer sends you back to the main
+            lobby, so you can sit down and play again.
+          </li>
+          <li>
+            <strong>Faster New Player Games:</strong> The New Player Game now always uses speed mode, like newly created
+            games.
+          </li>
+          <li>
+            <strong>Neighbor Chat games are always casual:</strong> They no longer count for Elo or ranked wins and
+            losses. Turning on Neighbor Chat sets the game type to Casual.
+          </li>
+          <li>
+            <strong>Whisper by seat number:</strong> In Neighbor Chat games you can now use{" "}
+            <code>{"/N <message>"}</code> with a neighbor&apos;s seat number, for example <code>{"/4 hi"}</code>, as
+            well as <code>/l</code> and <code>/r</code>. It only works for your nearest living neighbor on either side.
+          </li>
+          <li>
+            <strong>Tidier game list:</strong> The Neighbor Chat icon now appears next to the other game mode icons,
+            left of the timer, instead of after it.
+          </li>
+          <li>
+            <strong>Previous government markers moved:</strong> The yellow &quot;Prev. P&quot; / &quot;Prev. C&quot; tags now
+            sit below the previous president&apos;s and chancellor&apos;s cards, so player names stay put.
+          </li>
+        </ul>
+
+        <hr style={{ width: "100%" }} />
+
         <p>
           New optional game mode: <strong>neighbor chat!</strong> When on, living players can message their nearest
           living neighbor using <code>{"/l <message>"}</code> for left and <code>{"/r <message>"}</code> for right (it
@@ -38,10 +71,10 @@ class Changelog extends React.Component {
 
         <ul>
           <li>
-            <strong>New Player Games:</strong> There&apos;s now an always-open public Practice lobby, great for
-            newer players and open to everyone. Games use standard rules and start with <strong>5–7 players</strong>, using
-            the normal countdown. A fresh lobby opens when each game starts. Earn the usual XP without
-            affecting your ranked ratings.
+            <strong>New Player Games:</strong> There&apos;s now an always-open public Practice lobby, great for newer
+            players and open to everyone. Games use standard rules and start with <strong>5–7 players</strong>, using
+            the normal countdown. A fresh lobby opens when each game starts. Earn the usual XP without affecting your
+            ranked ratings.
           </li>
           <li>
             <strong>Better mobile replays:</strong> Player names have more room, seats scroll horizontally, and turn and

@@ -45,9 +45,39 @@ describe("DisplayLobbies", () => {
     const icon = row.find(".options-icons-container .exchange.icon");
     expect(icon).toHaveLength(1);
     expect(icon.parent().prop("data-tooltip")).toBe(
-      "Neighbor Chat - /l and /r message your nearest living neighbor to the left or right; messages are visible only to you, your neighbor, and authorized moderators, including after the game."
+      "Neighbor Chat (always casual) - /l and /r message your nearest living neighbor to the left or right, or use their seat number (for example /4); messages are visible only to you, your neighbor, and authorized moderators, including after the game."
     );
     expect(icon.parent().prop("data-inverted")).toBe("");
+  });
+
+  it.each([
+    [60, 1600, ["Timed Mode: 1: 00", "Elo minimum: 1600"]],
+    [false, 1600, ["Elo minimum: 1600"]],
+    [60, null, ["Timed Mode: 1: 00"]],
+  ])("keeps timer and Elo requirements after all mode icons (timer: %s, Elo: %s)", (timedMode, eloMinimum, trailing) => {
+    const row = renderRow(
+      newPlayerRow({
+        neighborChat: true,
+        timedMode,
+        eloMinimum,
+        xpMinimum: 10,
+        isVerifiedOnly: true,
+        flappyMode: true,
+        isUnlisted: true,
+      }),
+      { staffRole: "admin" }
+    );
+    const labels = row.find(".options-icons-container > span").map((span) => span.prop("data-tooltip"));
+    expect(labels.slice(-trailing.length)).toEqual(trailing);
+    expect(labels.slice(0, -trailing.length).some((label) => label.startsWith("Neighbor Chat"))).toBe(true);
+    expect(row.find(".options-icons-container .exchange.icon")).toHaveLength(1);
+  });
+
+  it("labels silent Neighbor Chat games as disabling public chat only", () => {
+    const row = renderRow(newPlayerRow({ neighborChat: true, playerChats: "disabled" }));
+    expect(row.find(".mute.icon").parent().prop("data-tooltip")).toBe(
+      "Public Player Chat Disabled - Neighbor Chat Enabled"
+    );
   });
 
   it.each([false, undefined])("omits the Neighbor Chat icon and tooltip when the flag is %s", (neighborChat) => {

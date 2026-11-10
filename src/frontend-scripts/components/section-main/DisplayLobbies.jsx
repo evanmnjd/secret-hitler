@@ -147,7 +147,9 @@ const DisplayLobbies = (props) => {
 
     if (game.playerChats === "disabled") {
       playerChats = <i className="mute icon" />;
-      playerChatsTooltip = "Player Chat Disabled";
+      playerChatsTooltip = game.neighborChat
+        ? "Public Player Chat Disabled - Neighbor Chat Enabled"
+        : "Player Chat Disabled";
     } else if (game.playerChats === "emotes") {
       playerChats = <i className="smile icon" />;
       playerChatsTooltip = "Emotes Only";
@@ -246,7 +248,7 @@ const DisplayLobbies = (props) => {
     if (game.neighborChat) {
       neighborChat = <i className="exchange icon" />;
       neighborChatTooltip =
-        "Neighbor Chat - /l and /r message your nearest living neighbor to the left or right; messages are visible only to you, your neighbor, and authorized moderators, including after the game.";
+        "Neighbor Chat (always casual) - /l and /r message your nearest living neighbor to the left or right, or use their seat number (for example /4); messages are visible only to you, your neighbor, and authorized moderators, including after the game.";
     }
 
     if (game.isUnlisted) {
@@ -331,19 +333,15 @@ const DisplayLobbies = (props) => {
             {noTopdecking}
           </span>
         )}
+        {/* Neighbor Chat is a game mode: keep it with the other mode icons, left of the timer. */}
+        {neighborChat && (
+          <span data-tooltip={neighborChatTooltip} data-inverted="">
+            {neighborChat}
+          </span>
+        )}
         {rainbowgame && (
           <span data-tooltip={rainbowgameTooltip} data-inverted="">
             {rainbowgame}
-          </span>
-        )}
-        {timedMode && (
-          <span data-tooltip={timedModeTooltip} data-inverted="">
-            {timedMode}
-          </span>
-        )}
-        {eloMinimum && (
-          <span data-tooltip={eloMinimumTooltip} data-inverted="">
-            {eloMinimum}
           </span>
         )}
         {xpMinimum && (
@@ -366,14 +364,19 @@ const DisplayLobbies = (props) => {
             {flappyOnlyMode}
           </span>
         )}
-        {neighborChat && (
-          <span data-tooltip={neighborChatTooltip} data-inverted="">
-            {neighborChat}
-          </span>
-        )}
         {unlistedGame && (
           <span data-tooltip={unlistedGameTooltip} data-inverted="">
             {unlistedGame}
+          </span>
+        )}
+        {timedMode && (
+          <span data-tooltip={timedModeTooltip} data-inverted="">
+            {timedMode}
+          </span>
+        )}
+        {eloMinimum && (
+          <span data-tooltip={eloMinimumTooltip} data-inverted="">
+            {eloMinimum}
           </span>
         )}
       </div>

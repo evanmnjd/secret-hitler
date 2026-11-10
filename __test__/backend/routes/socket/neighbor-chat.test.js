@@ -507,6 +507,17 @@ describe("Neighbor Chat guards", () => {
     ]);
   });
 
+  it("does not suggest forbidden public chat when a silent game's Neighbor Chat limit is reached", () => {
+    const { MAX_NEIGHBOR_MESSAGES } = require("../../../../routes/socket/neighbor-chat");
+    game.general.playerChats = "disabled";
+    game.private.neighborChats = Array.from({ length: MAX_NEIGHBOR_MESSAGES }, () => ({ chat: "old evidence" }));
+    run("/r over limit");
+    expect(game.private.neighborChats).toHaveLength(MAX_NEIGHBOR_MESSAGES);
+    expect(sockets.Player2.emit).not.toHaveBeenCalled();
+    expect(deliveredChats("Player1").map(textOf)).toEqual(["Neighbor Chat has reached this game's message limit."]);
+    expect(game.chats).toEqual([]);
+  });
+
   it.each([false, undefined])("refuses when the mode flag is %s", (flag) => {
     game.general.neighborChat = flag;
     run("/r hello");
@@ -546,10 +557,10 @@ describe("Neighbor Chat guards", () => {
     expect(deliveredChats("Player1").map(textOf)).toEqual(["Neighbor Chat is not ready yet."]);
   });
 
-  it("refuses silent games even for seated staff", () => {
+  it("allows private Neighbor Chat in silent games even for seated staff", () => {
     game.general.playerChats = "disabled";
     run("/r hello", "Player1", true);
-    expectRefusal("Chat is disabled in this game.");
+    expectDelivery(1, 2, "right");
   });
 
   it("refuses Flappy pre-lock even for seated staff", () => {
@@ -611,6 +622,90 @@ describe("Neighbor Chat through the existing chat handler", () => {
   it("delivers through addNewGameChat and the real per-player update path", async () => {
     await addChat("/r hello");
     expectDelivery(1, 2, "right");
+  });
+
+  it.each([
+    ["l", 7, "left", false],
+    ["r", 2, "right", false],
+    ["l", 7, "left", true],
+    ["r", 2, "right", true],
+    ["7", 7, "left", false],
+    ["2", 2, "right", false],
+    ["7", 7, "left", true],
+    ["2", 2, "right", true],
+  ])("delivers silent /%s to seat %i (%s; seated staff: %s)", async (command, recipient, direction, staff) => {
+    game.general.playerChats = "disabled";
+    await addChat(`/${command} hello`, "Player1", staff ? ["Player1"] : []);
+    expectDelivery(1, recipient, direction);
+  });
+
+  it("rejects a non-neighbor seat whisper in a silent game without delivering it", async () => {
+    game.general.playerChats = "disabled";
+    await addChat("/3 hello");
+    expectRefusal("You can only whisper to your neighbors: seats 2 and 7.");
+  });
+
+  it.each([false, true])("keeps silent public messages blocked (seated staff: %s)", async (staff) => {
+    game.general.playerChats = "disabled";
+    const message = "This must not reach public chat";
+    await addChat(message, "Player1", staff ? ["Player1"] : []);
+
+    expect(game.chats).toEqual([]);
+    expect(game.private.neighborChats).toEqual([]);
+    expect(game.private.seatedPlayers.flatMap((player) => player.gameChats)).toEqual([]);
+    expect(game.private.commandChats.Player1.map(textOf)).toEqual(["Chat is disabled in this game."]);
+    for (const socket of Object.values(sockets)) {
+      expect(JSON.stringify(socket.emit.mock.calls)).not.toContain(message);
+    }
+  });
+
+  it.each([
+    ["r", false],
+    ["r", undefined],
+    ["2", false],
+    ["2", undefined],
+  ])("still requires the Neighbor Chat opt-in for silent /%s (%s)", async (command, flag) => {
+    game.general.playerChats = "disabled";
+    game.general.neighborChat = flag;
+    await addChat(`/${command} hello`);
+    expectRefusal("Neighbor Chat is not enabled in this game.");
+  });
+
+  describe.each(["r", "2"])("silent /%s restrictions", (command) => {
+    it.each([
+      ["dead sender", "Only living players who have not left can use Neighbor Chat."],
+      ["departed sender", "Only living players who have not left can use Neighbor Chat."],
+      ["muted sender", "Unmute Neighbor Chat before sending a message."],
+      ["muted recipient", "This neighbor is not accepting Neighbor Chat."],
+      ["Flappy pre-lock", "Chat is disabled until a bird clears the first gate."],
+    ])("preserves the %s restriction in silent Neighbor Chat", async (guard, message) => {
+      game.general.playerChats = "disabled";
+      if (guard === "dead sender") game.publicPlayersState[0].isDead = true;
+      if (guard === "departed sender") game.publicPlayersState[0].leftGame = true;
+      if (guard === "muted sender") game.private.seatedPlayers[0].neighborChatMuted = true;
+      if (guard === "muted recipient") game.private.seatedPlayers[1].neighborChatMuted = true;
+      if (guard === "Flappy pre-lock") {
+        game.gameState.phase = "flappyHitler";
+        game.flappyState = { isActive: true, lockedIn: false };
+      }
+      await addChat(`/${command} hello`, "Player1", ["Player1"]);
+      expectRefusal(message);
+    });
+  });
+
+  it.each(["r", "2"])("keeps silent /%s restricted when archived and replayed", async (command) => {
+    game.general.playerChats = "disabled";
+    await addChat(`/${command} private conversation`);
+    const { replayForViewer } = require("../../../../routes/socket/neighbor-chat");
+    const archive = generateGameObject(game);
+    expect(archive.playerChats).toBe("disabled");
+    expect(archive.neighborChat).toBe(true);
+    expect(archive.chats).toEqual([]);
+    expect(replayForViewer(archive, undefined, false).chats).toEqual([]);
+    expect(replayForViewer(archive, "Player3", false).chats).toEqual([]);
+    expect(replayForViewer(archive, "Player1", false).chats).toEqual(archive.neighborChats);
+    expect(replayForViewer(archive, "Player2", false).chats).toEqual(archive.neighborChats);
+    expect(replayForViewer(archive, "Moderator", true).chats).toEqual(archive.neighborChats);
   });
 
   it.each([null, 42, {}, []])("rejects non-string wire chat %j without throwing", async (chat) => {
@@ -691,5 +786,194 @@ describe("public emote-chat extraction preserves the existing call site", () => 
     models.getPrivateChatTruncate.mockReturnValue(2);
     await addChat(chat);
     expect(game.chats.map((entry) => entry.chat)).toEqual(expected);
+  });
+});
+
+describe("Neighbor Chat by seat number (/N)", () => {
+  const setPlayerCount = (count) => {
+    game.publicPlayersState.length = count;
+    game.private.seatedPlayers.length = count;
+  };
+
+  it.each([
+    ["/2 hello", 3, 2, "left"],
+    ["/4 hello", 3, 4, "right"],
+  ])("%s from seat %i reaches seat %i on the %s", (message, sender, recipient, direction) => {
+    run(message, `Player${sender}`);
+    expectDelivery(sender, recipient, direction);
+  });
+
+  it("skips a dead neighbor: seat 3 can use /5 but not /4 once seat 4 is shot", () => {
+    game.publicPlayersState[3].isDead = true;
+    run("/4 hello", "Player3");
+    expectRefusal("You can only whisper to your neighbors: seats 2 and 5.", "Player3");
+    jest.clearAllMocks();
+    game.private.commandChats = {};
+    run("/5 hello", "Player3");
+    expectDelivery(3, 5, "right");
+  });
+
+  it("skips a player who left", () => {
+    game.publicPlayersState[1].leftGame = true;
+    run("/1 hello", "Player3");
+    expectDelivery(3, 1, "left");
+  });
+
+  it.each([
+    ["/5 hello", 5, "left"],
+    ["/2 hello", 2, "right"],
+  ])("wraps around in a 5-player game: seat 1 %s reaches seat %i", (message, recipient, direction) => {
+    setPlayerCount(5);
+    run(message);
+    expectDelivery(1, recipient, direction);
+  });
+
+  it("wraps around from the last seat", () => {
+    run("/1 hello", "Player7");
+    expectDelivery(7, 1, "right");
+  });
+
+  it.each([
+    "/3 hello",
+    "/7 hello",
+    "/0 hello",
+    "/8 hello",
+    "/11 hello",
+    "/99 hello",
+    "/1 hello",
+  ])("refuses %s from seat 1 and names the valid seats", (message) => {
+    setPlayerCount(5);
+    run(message);
+    expectRefusal("You can only whisper to your neighbors: seats 2 and 5.");
+  });
+
+  it("names a single seat when both neighbors are the same player, and delivers to it once", () => {
+    game.publicPlayersState.forEach((player, index) => {
+      player.isDead = index !== 0 && index !== 3;
+    });
+    run("/2 hello");
+    expectRefusal("You can only whisper to your neighbor: seat 4.");
+    jest.clearAllMocks();
+    game.private.commandChats = {};
+    run("/4 hello");
+    expectDelivery(1, 4, "right");
+  });
+
+  it("refuses when every other seat is dead or left", () => {
+    game.publicPlayersState.slice(1).forEach((player) => {
+      player.isDead = true;
+    });
+    run("/2 hello");
+    expectRefusal("There is no one left to talk to.");
+  });
+
+  it.each([
+    ["/10 hi", 9, 10, "right"],
+    ["/04 hi", 3, 4, "right"],
+  ])("parses %s as a seat number", (message, sender, recipient, direction) => {
+    for (let index = 7; index < 10; index++) {
+      const userName = `Player${index + 1}`;
+      game.publicPlayersState.push({ userName, isDead: false, leftGame: false });
+      game.private.seatedPlayers.push({ userName, gameChats: [], playersState: [] });
+      sockets[userName] = { handshake: { session: { passport: { user: userName } } }, emit: jest.fn() };
+      global.io.sockets.adapter.rooms.NeighborChatTest.sockets[userName] = true;
+      models.userList.push({ userName, xpOverall: 20, status: { type: "none" } });
+    }
+    run(message, `Player${sender}`);
+    expectDelivery(sender, recipient, direction, "hi");
+  });
+
+  it("a bare /4 uses the usage response", () => {
+    run("/4", "Player3");
+    expectRefusal("You're not doing this right. Some examples: /2 <message>, /4 <message>", "Player3");
+  });
+
+  it.each(["/4hello", "/100 hello", "/4x hello"])("treats %s as an unknown command, not a seat", (message) => {
+    run(message, "Player3");
+    const name = message.slice(1).split(" ")[0];
+    // Unknown commands keep their existing (non-neighbor) feedback path; nothing is whispered.
+    expect(game.private.commandChats.Player3.map(textOf)).toEqual([
+      `Unknown command /${name}. Use /help for a list of commands.`,
+    ]);
+    expect(game.private.seatedPlayers.flatMap((player) => player.gameChats)).toEqual([]);
+    expect(game.private.neighborChats).toEqual([]);
+    expect(game.private.hiddenInfoChat).toEqual([]);
+    expect(game.chats).toEqual([]);
+  });
+
+  it.each([false, undefined])("refuses like /l when the mode flag is %s", (flag) => {
+    game.general.neighborChat = flag;
+    run("/2 hello");
+    expectRefusal("Neighbor Chat is not enabled in this game.");
+  });
+
+  it.each([false, true])("refuses an observer with staff status %s", (aem) => {
+    run("/2 hello", "Observer", aem);
+    expectRefusal("This command cannot be used by observers.", "Observer");
+  });
+
+  it("refuses a non-seated user even if a caller marks them seated", () => {
+    run("/2 hello", "Observer", false, true);
+    expectRefusal("Only living players who have not left can use Neighbor Chat.", "Observer");
+  });
+
+  it("refuses a dead sender", () => {
+    game.publicPlayersState[2].isDead = true;
+    run("/2 hello", "Player3");
+    expectRefusal("Only living players who have not left can use Neighbor Chat.", "Player3");
+  });
+
+  it("respects a muted recipient without redirecting to the other neighbor", () => {
+    game.private.seatedPlayers[3].neighborChatMuted = true;
+    run("/4 hello", "Player3");
+    expectRefusal("This neighbor is not accepting Neighbor Chat.", "Player3");
+  });
+
+  it("respects the per-game message limit", () => {
+    game.private.neighborChats.push(...Array.from({ length: 1000 }, () => ({ chat: [] })));
+    run("/2 hello", "Player3");
+    expect(game.private.commandChats.Player3.map(textOf)).toEqual([
+      "Neighbor Chat has reached this game's message limit. Please use public chat.",
+    ]);
+    expect(game.private.seatedPlayers[1].gameChats).toEqual([]);
+  });
+
+  it("masks live names in blind mode and keeps the archive out of public chats", () => {
+    game.general.blindMode = true;
+    run("/2 hello", "Player3");
+    expect(game.private.seatedPlayers[2].gameChats.map(textOf)).toEqual(["to left {2}: hello"]);
+    expect(game.private.seatedPlayers[1].gameChats.map(textOf)).toEqual(["→ from right {3}: hello"]);
+    for (const player of game.publicPlayersState) {
+      expect(JSON.stringify(deliveredChats(player.userName))).not.toMatch(/Player[1-7]/);
+    }
+    expect(game.private.neighborChats.map(textOf)).toEqual([
+      "Neighbor Chat - (#3 Player3) to left (#2 Player2): hello",
+    ]);
+    game.gameState.isCompleted = "liberal";
+    const archive = generateGameObject(game);
+    expect(archive.chats).toEqual([]);
+    expect(archive.neighborChats).toEqual(game.private.neighborChats);
+  });
+
+  it("filters emote-only games", () => {
+    game.general.playerChats = "emotes";
+    run("/4 secret :JA: 12", "Player3");
+    expectDelivery(3, 4, "right", " :ja: 12");
+  });
+
+  it("delivers through the existing chat handler", async () => {
+    await addChat("/4 hello", "Player3");
+    expectDelivery(3, 4, "right");
+  });
+
+  it("is listed in /help only in Neighbor Chat games", () => {
+    run("/help");
+    expect(game.private.commandChats.Player1.map(textOf)).toContain(
+      "/N - Messages seat N if it is your nearest living left or right neighbor; visible only to participants and authorized moderators, including afterwards."
+    );
+    game.general.neighborChat = false;
+    game.private.commandChats = {};
+    run("/help");
+    expect(game.private.commandChats.Player1.map(textOf).some((line) => line.startsWith("/N - "))).toBe(false);
   });
 });
