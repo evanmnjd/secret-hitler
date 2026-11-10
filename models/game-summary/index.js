@@ -7,6 +7,11 @@
 
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
+// Turns and seats are addressed by their array index throughout replay building.
+// Keep the root game ID, but do not allocate unused ObjectIds for each nested row.
+// Missing optional hands/claims/peeks already mean "no action" to the replay parser;
+// avoid materializing an empty BSON array for each absent field on every turn.
+const optionalArray = () => ({ type: Array, default: undefined });
 const gameSummary = new Schema({
   _id: String,
   date: Date,
@@ -20,9 +25,7 @@ const gameSummary = new Schema({
     unlistedGame: Boolean,
     monarchistSH: Boolean,
     avalonSH: {
-      type: {
-        withPercival: Boolean,
-      },
+      type: new Schema({ withPercival: Boolean }, { _id: false }),
       default: null,
     },
     noTopdecking: Number,
@@ -33,12 +36,15 @@ const gameSummary = new Schema({
     flappyWinner: String,
   },
   players: [
-    {
-      username: String,
-      role: String,
-      icon: Number,
-      hashUid: String,
-    },
+    new Schema(
+      {
+        username: String,
+        role: String,
+        icon: Number,
+        hashUid: String,
+      },
+      { _id: false }
+    ),
   ],
   libElo: {
     overall: Number,
@@ -49,36 +55,39 @@ const gameSummary = new Schema({
     season: Number,
   },
   logs: [
-    {
-      // election
-      presidentId: Number,
-      chancellorId: Number,
-      votes: Array, // [Boolean]
+    new Schema(
+      {
+        // election
+        presidentId: Number,
+        chancellorId: Number,
+        votes: Array, // [Boolean]
 
-      // policy enaction
-      presidentHand: Array, // [String] eg. [ "fascist", "liberal", "fascist" ]
-      chancellorHand: Array, // [String]
-      enactedPolicy: String,
+        // policy enaction
+        presidentHand: optionalArray(), // [String] eg. [ "fascist", "liberal", "fascist" ]
+        chancellorHand: optionalArray(), // [String]
+        enactedPolicy: String,
 
-      presidentClaim: Array, // [String]
-      chancellorClaim: Array, // [String]
+        presidentClaim: optionalArray(), // [String]
+        chancellorClaim: optionalArray(), // [String]
 
-      presidentVeto: Boolean,
-      chancellorVeto: Boolean,
+        presidentVeto: Boolean,
+        chancellorVeto: Boolean,
 
-      // actions
-      policyPeek: Array, // [String]
-      policyPeekClaim: Array, // [String]
-      investigatorId: Number,
-      investigationId: Number,
-      investigationClaim: String,
-      specialElection: Number,
-      execution: Number,
-      assassination: Number,
+        // actions
+        policyPeek: optionalArray(), // [String]
+        policyPeekClaim: optionalArray(), // [String]
+        investigatorId: Number,
+        investigationId: Number,
+        investigationClaim: String,
+        specialElection: Number,
+        execution: Number,
+        assassination: Number,
 
-      // other metadata
-      deckState: Array, // [String], eg. [ "fascist", "liberal", "fascist", "fascist", "liberal" ]
-    },
+        // other metadata
+        deckState: Array, // [String], eg. [ "fascist", "liberal", "fascist", "fascist", "liberal" ]
+      },
+      { _id: false }
+    ),
   ],
   customGameSettings: {
     enabled: Boolean,
