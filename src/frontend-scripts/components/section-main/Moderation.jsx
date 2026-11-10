@@ -21,6 +21,12 @@ export default class Moderation extends React.Component {
     playerInputText: "",
     resetServerCount: 0,
     logCount: 1,
+    modLogPage: 0,
+    modLogCursors: [null],
+    modLogNextCursor: null,
+    modLogHasMore: false,
+    modLogLoading: true,
+    modLogError: "",
     modLogToday: false,
     nonSeasonalSetStats: false,
     logSort: {
@@ -53,11 +59,21 @@ export default class Moderation extends React.Component {
       });
     });
 
+    socket.on("modInfoError", (error) => {
+      this.setState({ modLogLoading: false, modLogError: error });
+    });
     socket.on("modInfo", (info) => {
+      this.cancelModLogRequest();
       this.setState({
         userList: info.userList,
         gameList: info.gameList,
         log: info.modReports,
+        modLogPage: 0,
+        modLogCursors: [null],
+        modLogNextCursor: info.modLogNextCursor || null,
+        modLogHasMore: Boolean(info.modLogHasMore),
+        modLogLoading: false,
+        modLogError: "",
         showActions: info.showActions || false,
       });
 
@@ -213,7 +229,9 @@ export default class Moderation extends React.Component {
   componentWillUnmount() {
     const { socket } = this.props;
 
+    this.cancelModLogRequest();
     socket.off("modInfo");
+    socket.off("modInfoError");
     socket.off("lagTestResults");
   }
 
@@ -1256,8 +1274,45 @@ export default class Moderation extends React.Component {
     );
   }
 
+  cancelModLogRequest = () => {
+    clearTimeout(this.modLogTimer);
+    this.modLogRequestId = (this.modLogRequestId || 0) + 1;
+    this.modLogPending = false;
+  };
+
+  requestModLog = (before = null, page = 0) => {
+    // Instance guard closes the interval before React commits the loading state.
+    if (this.modLogPending) return;
+    this.modLogPending = true;
+    const id = (this.modLogRequestId || 0) + 1;
+    this.modLogRequestId = id;
+    this.setState({ modLogLoading: true, modLogError: "" });
+    const finish = (result) => {
+      if (this.modLogRequestId !== id) return;
+      this.cancelModLogRequest();
+      if (!result?.success) {
+        this.setState({
+          modLogLoading: false,
+          modLogError: result?.error || "Unable to load the log. Please try again.",
+        });
+        return;
+      }
+      this.setState((state) => ({
+        log: result.actions,
+        modLogPage: page,
+        modLogCursors: [...state.modLogCursors.slice(0, page), before],
+        modLogNextCursor: result.nextCursor,
+        modLogHasMore: result.hasMore,
+        modLogLoading: false,
+        modLogError: "",
+      }));
+    };
+    this.modLogTimer = setTimeout(() => finish({ error: "The log request timed out. Please try again." }), 10000);
+    this.props.socket.emit("getModActions", { before }, finish);
+  };
+
   renderModLog() {
-    const { logSort, logCount } = this.state;
+    const { logSort } = this.state;
     const clickSort = (type) => {
       this.setState({
         logSort: {
@@ -1266,18 +1321,6 @@ export default class Moderation extends React.Component {
             this.state.logSort.direction === "descending" && type === logSort.type ? "ascending" : "descending",
         },
       });
-    };
-    const modRetrieveClick = (e) => {
-      e.preventDefault();
-
-      this.setState(
-        {
-          logCount: this.state.logCount + 1,
-        },
-        () => {
-          this.props.socket.emit("getModInfo", logCount);
-        }
-      );
     };
 
     const elem = document.getElementById("playernameelem");
@@ -1390,8 +1433,25 @@ export default class Moderation extends React.Component {
               ))}
           </tbody>
         </table>
-        <button className="ui primary button" onClick={modRetrieveClick}>
-          Get 500 more mod actions
+        {this.state.modLogError && <p role="alert">{this.state.modLogError}</p>}
+        <p>
+          Page {this.state.modLogPage + 1} — up to 500 actions per page. Sorting and name filters apply to this page.
+        </p>
+        <button
+          className="ui button"
+          disabled={this.state.modLogLoading || this.state.modLogPage === 0}
+          onClick={() =>
+            this.requestModLog(this.state.modLogCursors[this.state.modLogPage - 1], this.state.modLogPage - 1)
+          }
+        >
+          Newer 500 actions
+        </button>
+        <button
+          className="ui primary button"
+          disabled={this.state.modLogLoading || !this.state.modLogHasMore || this.state.modLogPage >= 999}
+          onClick={() => this.requestModLog(this.state.modLogNextCursor, this.state.modLogPage + 1)}
+        >
+          {this.state.modLogLoading ? "Loading actions…" : "Get 500 older mod actions"}
         </button>
       </div>
     );
@@ -1481,7 +1541,7 @@ export default class Moderation extends React.Component {
         >
           Show/Hide Game Icons
         </span>
-        <span className="refreshModlog" onClick={() => this.props.socket.emit("getModInfo", 1)}>
+        <span className="refreshModlog" onClick={() => this.requestModLog()}>
           Refresh
           <i className="icon repeat" id="modlogRefresh" />
         </span>
