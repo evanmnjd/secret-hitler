@@ -540,3 +540,280 @@ describe("periodic New Player intake recovery", () => {
     expect(Game.findOne).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("empty lobby cleanup across lobby types", () => {
+  const humanLobby = (visibility) => {
+    const game = waitingGame();
+    delete game.general.systemLobby;
+    game.general.private = visibility === "private";
+    game.general.unlistedGame = visibility === "unlisted";
+    return game;
+  };
+
+  it.each([
+    ["public", "leave"],
+    ["public", "disconnect"],
+    ["private", "leave"],
+    ["private", "disconnect"],
+    ["unlisted", "leave"],
+    ["unlisted", "disconnect"],
+  ])("deletes a %s countdown lobby after its last player chooses %s", async (visibility, action) => {
+    const game = humanLobby(visibility);
+    const socket = await joinGrey(game);
+    // A countdown has already fallen below its start threshold; its final player now exits.
+    game.gameState.isStarted = true;
+    game.gameState.cancellStart = true;
+    makeSocket(game, "Observer");
+    if (action === "leave") leave(socket, game);
+    else handleSocketDisconnect(socket);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+    expect(endGame.saveAndDeleteGame).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "leave",
+    "disconnect",
+  ])("retains waiting system intake after the final countdown player chooses %s", async (action) => {
+    const game = waitingGame();
+    const socket = await joinGrey(game);
+    game.gameState.isStarted = true;
+    game.gameState.cancellStart = true;
+    if (action === "leave") leave(socket, game);
+    else handleSocketDisconnect(socket);
+    await settle();
+    expect(models.games[game.general.uid]).toBe(game);
+    expect(game.publicPlayersState).toEqual([]);
+    expect(endGame.saveAndDeleteGame).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "public",
+    "private",
+    "unlisted",
+  ])("collects a stranded empty %s pregame lobby without timestamps", async (visibility) => {
+    const game = humanLobby(visibility);
+    game.gameState.isStarted = true;
+    game.gameState.cancellStart = true;
+    const intake = lobbies.buildNewPlayerLobby("OtherIntake");
+    models.games.OtherIntake = intake;
+    const occupied = lobbies.buildNewPlayerLobby("Occupied");
+    delete occupied.general.systemLobby;
+    occupied.publicPlayersState.push({ userName: "StillHere", connected: true });
+    models.games.Occupied = occupied;
+    socketRoutes();
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+    expect(models.games.OtherIntake).toBe(intake);
+    expect(models.games.Occupied).toBe(occupied);
+    expect(endGame.saveAndDeleteGame).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "leave",
+    "disconnect",
+  ])("uses the actual roster to abandon a started cohort after its last %s", async (action) => {
+    const game = startedGame();
+    // Historical metadata must not prevent five actual seats from becoming empty.
+    game.general.playerCount = 6;
+    const socket = makeSocket(game, "Grey", false);
+    if (action === "leave") leave(socket, game);
+    else handleSocketDisconnect(socket);
+    expect(game.general.timeAbandoned).toBeInstanceOf(Date);
+    expect(models.games[game.general.uid]).toBe(game);
+    expect(endGame.saveAndDeleteGame).not.toHaveBeenCalled();
+    game.general.timeAbandoned = new Date(Date.now() - 121000);
+    socketRoutes();
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+  });
+
+  it("recovers an already-empty started cohort missing an abandonment timestamp, with the normal grace period", async () => {
+    const game = startedGame();
+    game.general.playerCount = 6;
+    for (const player of game.publicPlayersState) {
+      player.connected = false;
+      player.leftGame = true;
+    }
+    socketRoutes();
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(game.general.timeAbandoned).toBeInstanceOf(Date);
+    expect(models.games[game.general.uid]).toBe(game);
+    expect(endGame.saveAndDeleteGame).not.toHaveBeenCalled();
+    const firstAbandonment = game.general.timeAbandoned;
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(game.general.timeAbandoned).toEqual(firstAbandonment);
+    game.general.timeAbandoned = new Date(Date.now() - 121000);
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+  });
+
+  it("does not start an abandonment clock while a started cohort still has an active player", async () => {
+    const game = startedGame();
+    game.general.playerCount = 6;
+    socketRoutes();
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBe(game);
+    expect(game.general.timeAbandoned).toBeUndefined();
+    expect(endGame.saveAndDeleteGame).not.toHaveBeenCalled();
+  });
+
+  it("retries an empty pregame teardown on the next collector tick after a failed database lookup", async () => {
+    const game = humanLobby("private");
+    const socket = await joinGrey(game);
+    const error = new Error("Mongo temporarily unavailable during teardown");
+    const log = jest.spyOn(console, "log").mockImplementation(() => {});
+    Game.findOne.mockRejectedValueOnce(error);
+    leave(socket, game);
+    await settle();
+    expect(models.games[game.general.uid]).toBe(game);
+    expect(game.isBeingTornDown).toBe(false);
+    expect(log).toHaveBeenCalledWith(error, "err in saveOrUpdateGame");
+    socketRoutes();
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+    expect(Game.findOne).toHaveBeenCalledTimes(2);
+    expect(Game.prototype.save).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+  });
+
+  it("expires a remade old cohort after its grace period even while a nonvoter remains seated", async () => {
+    const game = startedGame();
+    const socket = makeSocket(game, "Grey", false);
+    game.general.isRemade = true;
+    game.general.timeRemade = Date.now() - 119000;
+    socketRoutes();
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBe(game);
+    expect(endGame.saveAndDeleteGame).not.toHaveBeenCalled();
+    expect(game.gameState.isCompleted).toBeFalsy();
+    game.general.timeRemade = Date.now() - 121000;
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+    expect(socket.leave).toHaveBeenCalledWith(game.general.uid);
+    expect(game.gameState.isCompleted).toBeFalsy();
+  });
+
+  it("gives an older remade cohort without a timestamp one grace period without resetting its clock", async () => {
+    const game = startedGame();
+    game.general.isRemade = true;
+    socketRoutes();
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(Number.isFinite(game.general.timeRemade)).toBe(true);
+    expect(models.games[game.general.uid]).toBe(game);
+    const firstRemadeTime = game.general.timeRemade;
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(game.general.timeRemade).toBe(firstRemadeTime);
+    game.general.timeRemade = Date.now() - 121000;
+    jest.advanceTimersByTime(30000);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+  });
+});
+
+describe("pending seating after lobby cleanup", () => {
+  const deferJoin = (game) => {
+    const socket = makeSocket(game, "LateJoiner", false);
+    let resolveLookup;
+    Account.findOne.mockReturnValueOnce(new Promise((resolve) => (resolveLookup = resolve)));
+    updateSeatedUser(socket, socket.handshake.session.passport, { uid: game.general.uid });
+    return {
+      socket,
+      finish: () =>
+        resolveLookup({ username: "LateJoiner", wins: 0, losses: 0, isRainbowOverall: false, gameSettings: {} }),
+    };
+  };
+
+  const expectNoLateSeat = (game, socket) => {
+    expect(game.publicPlayersState.some((player) => player.userName === "LateJoiner")).toBe(false);
+    expect(socket.emit).not.toHaveBeenCalledWith("updateSeatForUser", true);
+    expect(models.userList.find((user) => user.userName === "LateJoiner").status).toEqual({ type: "none" });
+  };
+
+  it("does not resurrect a room deleted while the seating account lookup was pending", async () => {
+    const game = waitingGame();
+    delete game.general.systemLobby;
+    const occupant = await joinGrey(game);
+    const pending = deferJoin(game);
+    leave(occupant, game);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+    pending.finish();
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+    expectNoLateSeat(game, pending.socket);
+    expect(game.gameState.isStarted).toBeFalsy();
+  });
+
+  it("does not seat into a room whose asynchronous teardown is still pending", async () => {
+    const game = waitingGame();
+    delete game.general.systemLobby;
+    const occupant = await joinGrey(game);
+    const pending = deferJoin(game);
+    let finishTeardown;
+    Game.findOne.mockReturnValueOnce(new Promise((resolve) => (finishTeardown = resolve)));
+    leave(occupant, game);
+    expect(models.games[game.general.uid]).toBe(game);
+    expect(game.isBeingTornDown).toBe(true);
+    pending.finish();
+    await settle();
+    expectNoLateSeat(game, pending.socket);
+    finishTeardown(null);
+    await settle();
+    expect(models.games[game.general.uid]).toBeUndefined();
+  });
+
+  it.each([
+    "disconnected",
+    "_replacedBySocketId",
+  ])("does not seat a joiner that becomes %s during account lookup", async (flag) => {
+    const game = waitingGame();
+    const pending = deferJoin(game);
+    pending.socket[flag] = flag === "disconnected" ? true : "ReplacementSocket";
+    pending.finish();
+    await settle();
+    expect(models.games[game.general.uid]).toBe(game);
+    expectNoLateSeat(game, pending.socket);
+  });
+
+  it("does not add a seat after tracks flip while the account lookup is pending", async () => {
+    const game = waitingGame();
+    const pending = deferJoin(game);
+    game.gameState.isTracksFlipped = true;
+    pending.finish();
+    await settle();
+    expectNoLateSeat(game, pending.socket);
+  });
+
+  it("does not seat into a stale object when another room occupies the same registry key", async () => {
+    const game = waitingGame();
+    const pending = deferJoin(game);
+    const replacement = lobbies.buildNewPlayerLobby(game.general.uid);
+    models.games[game.general.uid] = replacement;
+    pending.finish();
+    await settle();
+    expect(models.games[game.general.uid]).toBe(replacement);
+    expect(replacement.publicPlayersState).toEqual([]);
+    expectNoLateSeat(game, pending.socket);
+  });
+
+  it("ignores an account deleted before its pending seating lookup completes", async () => {
+    const game = waitingGame();
+    const socket = makeSocket(game, "LateJoiner", false);
+    Account.findOne.mockResolvedValueOnce(null);
+    updateSeatedUser(socket, socket.handshake.session.passport, { uid: game.general.uid });
+    await settle();
+    expectNoLateSeat(game, socket);
+  });
+});

@@ -39,6 +39,18 @@ const updateSeatedUser = (socket, passport, data) => {
   }
 
   Account.findOne({ username: passport.user }).then((account) => {
+    // The final player may have left while Mongo was loading this account. Never
+    // add a ghost seat (or start a countdown) on a removed, closing, or started room.
+    if (
+      !account ||
+      games[data.uid] !== game ||
+      game.isBeingTornDown ||
+      game.gameState.isTracksFlipped ||
+      socket.disconnected ||
+      socket._replacedBySocketId
+    ) {
+      return;
+    }
     const isNotMaxedOut = game.publicPlayersState.length < game.general.maxPlayersCount;
     const isNotInGame = !game.publicPlayersState.find((player) => player.userName === passport.user);
     const isRainbowSafe = !game.general.rainbowgame || (game.general.rainbowgame && account.isRainbowOverall);
