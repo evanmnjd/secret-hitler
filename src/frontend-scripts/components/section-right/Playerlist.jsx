@@ -471,8 +471,7 @@ class Playerlist extends React.Component {
                     className="crown-icon"
                   />
                 )}
-              {user.staffRole !== "admin" &&
-                Boolean(!user.staffDisableVisibleElo) &&
+              {Boolean(!user.staffDisableVisibleElo) &&
                 (() => {
                   return elo ? (
                     this.renderPublicRating(user, elo)
@@ -739,8 +738,7 @@ class Playerlist extends React.Component {
               })()}
               {renderStatus()}
             </div>
-            {user.staffRole !== "admin" &&
-              Boolean(!user.staffDisableVisibleElo) &&
+            {Boolean(!user.staffDisableVisibleElo) &&
               (() => {
                 return elo ? (
                   <div className="userlist-stats-container">{this.renderPublicRating(user, elo)}</div>
