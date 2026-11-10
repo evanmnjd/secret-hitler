@@ -73,6 +73,7 @@ const { instrumentSocket } = require("./bandwidth-diagnostics");
 const { recordSocketConnection, recordSocketDisconnect, recordUserListRequest } = require("./abuse-monitor");
 const mongoose = require("mongoose");
 const { ensureNewPlayerLobby, shouldSurviveEmptyPregame } = require("./system-lobbies/new-player");
+const { hasRemainingPlayers } = require("./game-lifecycle");
 
 let modUserNames = [],
   editorUserNames = [],
@@ -87,15 +88,29 @@ const gamesGarbageCollector = () => {
     // Empty intake is intentional, even with stale abandonment metadata; started cohorts are not exempt.
     if (shouldSurviveEmptyPregame(currentGame)) return;
 
+    const empty = !hasRemainingPlayers(currentGame);
+    const emptyPregame = empty && !currentGame.gameState.isTracksFlipped;
+    // Recover rooms missed by a leave event or a failed teardown lookup. Remade
+    // games are terminal even when someone remains on their old results screen.
+    if (empty && currentGame.gameState.isTracksFlipped && !currentGame.general.timeAbandoned) {
+      currentGame.general.timeAbandoned = currentTime;
+    }
+    if (currentGame.general.isRemade && !currentGame.general.timeRemade) {
+      currentGame.general.timeRemade = currentTime.getTime();
+    }
     const completedTimer =
       currentGame.gameState &&
       currentGame.gameState.isCompleted &&
       currentGame.gameState.timeCompleted &&
-      new Date(currentGame.gameState.timeCompleted + 1000 * 60 * 2);
+      new Date(new Date(currentGame.gameState.timeCompleted).getTime() + 1000 * 60 * 2);
+    const remadeTimer =
+      currentGame.general.isRemade &&
+      currentGame.general.timeRemade &&
+      new Date(new Date(currentGame.general.timeRemade).getTime() + 1000 * 60 * 2);
     const abandonedTimer =
       currentGame.general &&
       currentGame.general.timeAbandoned &&
-      new Date(currentGame.general.timeAbandoned.getTime() + 1000 * 60 * 2);
+      new Date(new Date(currentGame.general.timeAbandoned).getTime() + 1000 * 60 * 2);
 
     // To come maybe later
     // const modDeleteTimer = games[gameName].general.modDeleteDelay && new Date(games[gameName].general.modDeleteDelay.getTime() + 900000);
@@ -115,8 +130,10 @@ const gamesGarbageCollector = () => {
     // );
 
     toDelete =
-      (!games[gameName].general.modDeleteDelay && completedTimer && completedTimer < currentTime) ||
-      (abandonedTimer && abandonedTimer < currentTime);
+      emptyPregame ||
+      (!currentGame.general.modDeleteDelay &&
+        ((completedTimer && completedTimer <= currentTime) || (remadeTimer && remadeTimer <= currentTime))) ||
+      (abandonedTimer && abandonedTimer <= currentTime);
 
     // if (games[gameName] && modDeleteTimer && modDeleteTimer < currentTime) {
     // console.log('Mod Delete Delay Timer Expired. Deleting... ');

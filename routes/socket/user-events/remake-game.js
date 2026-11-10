@@ -9,6 +9,7 @@ const { updateSeatedUser } = require("./join-game");
 const { checkStartConditions } = require("./leave-game");
 const { remakeSchema } = require("./remake-game.schema");
 const { isNewPlayerLobby } = require("../system-lobbies/new-player");
+const { hasRemainingPlayers } = require("../game-lifecycle");
 
 /**
  * @param {object} passport - socket authentication.
@@ -90,11 +91,6 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
     // A remake continues this cohort; it must not become a second intake room or inherit empty-lobby survival.
     if (isNewPlayerLobby(newGame)) delete newGame.general.systemLobby;
     const remakePlayerNames = remakeData.filter((player) => player.isRemaking).map((player) => player.userName);
-    const remakePlayerSocketIDs = Object.keys(io.sockets.sockets).filter(
-      (socketId) =>
-        io.sockets.sockets[socketId].handshake.session.passport &&
-        remakePlayerNames.includes(io.sockets.sockets[socketId].handshake.session.passport.user)
-    );
     sendInProgressGameUpdate(game);
 
     newGame.gameState = {
@@ -160,6 +156,8 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
       newGame.chats.push(chat);
     }
     newGame.general.isRemade = false;
+    delete newGame.general.timeRemade;
+    delete newGame.general.timeAbandoned;
     newGame.general.isRemaking = false;
     newGame.general.isRecorded = false;
     newGame.summarySaved = false;
@@ -249,16 +247,44 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
     sendInProgressGameUpdate(game);
 
     setTimeout(() => {
+      if (games[game.general.uid] !== game || game.isBeingTornDown) return;
+
+      // Players can leave, disconnect, or replace their socket during the reveal
+      // delay. Resolve occupancy now, before installing any seats in the new room.
+      const remainingNames = new Set(
+        game.publicPlayersState
+          .filter((player) => !player.leftGame && player.connected !== false)
+          .map((player) => player.userName)
+      );
+      const remakePlayerSocketIDs = Object.keys(io.sockets.sockets).filter((id) => {
+        const socket = io.sockets.sockets[id];
+        const name = socket.handshake?.session?.passport?.user;
+        return (
+          !socket.disconnected &&
+          !socket._replacedBySocketId &&
+          remainingNames.has(name) &&
+          remakePlayerNames.includes(name)
+        );
+      });
+      const transferringNames = new Set(
+        remakePlayerSocketIDs.map((id) => io.sockets.sockets[id].handshake.session.passport.user)
+      );
+      newGame.publicPlayersState = newGame.publicPlayersState.filter((player) =>
+        transferringNames.has(player.userName)
+      );
+
       game.publicPlayersState.forEach((player) => {
         if (remakePlayerNames.includes(player.userName)) player.leftGame = true;
       });
 
-      if (game.publicPlayersState.filter((publicPlayer) => publicPlayer.leftGame).length === game.general.playerCount) {
+      if (!hasRemainingPlayers(game)) {
+        if (!game.general.timeAbandoned) game.general.timeAbandoned = new Date();
         saveAndDeleteGame(game.general.uid);
       } else {
         sendInProgressGameUpdate(game);
       }
 
+      if (!newGame.publicPlayersState.length) return;
       games[newGame.general.uid] = newGame;
       sendGameList();
 
@@ -344,6 +370,7 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
           clearInterval(game.private.remakeTimer);
           game.general.status = `Game has been ${game.general.isTourny ? "cancelled" : "remade"}.`;
           game.general.isRemade = true;
+          game.general.timeRemade = Date.now();
 
           const remainingPoliciesChat = {
             isRemainingPolicies: true,
