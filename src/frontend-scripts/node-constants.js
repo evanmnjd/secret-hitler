@@ -77,11 +77,11 @@ module.exports.PLAYERCOLORS = (user, isSeasonal, defaultClass, eloDisabled) => {
       vig: user.userName === "Vig" && user.staffRole === "admin",
       carl: user.userName === "carlgauss" && user.staffRole === "admin",
       rose: user.userName === "Sorrose" && user.staffRole === "admin",
+      nixon: user.userName === "SadNixon" && user.staffRole === "admin",
     });
   } else if (
     user.isContributor &&
-    (!(user.staffRole && user.staffRole.length && user.staffRole !== "trialmod" && user.staffRole !== "altmod") ||
-      !user.staffDisableStaffColor)
+    !Boolean(user.staffRole && user.staffRole.length && user.staffRole !== "trialmod" && user.staffRole !== "altmod")
   ) {
     return cn(defaultClass, "contributor");
   } else {
