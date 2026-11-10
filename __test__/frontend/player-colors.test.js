@@ -39,3 +39,45 @@ describe.each([
     expect(colors(graduate, false, "player", true)).toBe("player");
   });
 });
+
+describe.each([
+  ["frontend", frontendColors],
+  ["server", serverColors],
+])("%s staff color preferences", (_name, colors) => {
+  it.each([
+    "admin",
+    "moderator",
+    "editor",
+    "veteran",
+  ])("lets a contributor with role %s select the rating color without changing role", (staffRole) => {
+    const user = {
+      userName: "Staff",
+      staffRole,
+      isContributor: true,
+      isRainbowOverall: true,
+      isRainbowSeason: true,
+      eloOverall: 1800,
+      eloSeason: 1700,
+    };
+    const original = { ...user };
+    expect(colors({ ...user, staffDisableStaffColor: true }, false, "player")).toBe("player elo60");
+    expect(colors({ ...user, staffDisableStaffColor: true }, true, "player")).toBe("player elo40");
+    expect(user).toEqual(original);
+  });
+
+  it("restores SadNixon's special admin color and keeps visible-score hiding independent", () => {
+    const admin = {
+      userName: "SadNixon",
+      staffRole: "admin",
+      isContributor: true,
+      isRainbowOverall: true,
+      eloOverall: 1800,
+    };
+    expect(colors(admin, false, "player")).toBe("player admin nixon");
+    expect(colors({ ...admin, staffDisableStaffColor: true, staffDisableVisibleElo: true }, false, "player")).toBe(
+      "player elo60"
+    );
+    expect(colors({ ...admin, staffDisableStaffColor: false }, false, "player")).toBe("player admin nixon");
+    expect(colors({ isContributor: true }, false, "player")).toBe("player contributor");
+  });
+});
