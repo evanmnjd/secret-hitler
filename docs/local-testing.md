@@ -10,8 +10,8 @@ From your existing repository folder, with `origin` pointing to
 `https://github.com/evanmnjd/secret-hitler.git`:
 
 ```sh
-git fetch origin
-git worktree add -b local/all-fixes ../secret-hitler-test origin/all-fixes-local-testing
+git fetch origin all-fixes-local-testing
+git worktree add -b local/all-fixes ../secret-hitler-test FETCH_HEAD
 cd ../secret-hitler-test
 corepack pnpm install --frozen-lockfile
 ```
