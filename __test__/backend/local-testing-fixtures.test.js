@@ -10,6 +10,7 @@ const buildReplay = require("../../src/frontend-scripts/replay/buildReplay").def
 const { CURRENT_SEASON_FIELDS } = require("../../src/shared/season");
 const { rankedSeasonEligibility } = require("../../src/shared/ranked-eligibility");
 const { obfIP } = require("../../routes/socket/ip-obf");
+const { customGameSettingsSchema } = require("../../routes/socket/user-events/create-game.schema");
 
 const now = new Date("2026-11-11T17:00:00Z");
 let fixtures;
@@ -142,4 +143,9 @@ it.each([NaN, -1, 1.5, 10001])("bounds the fixture request count %s", (modAction
 it("accepts zero moderation rows without changing the playable dataset", () => {
   expect(buildFixtures({ now, modActions: 0 }).modActions).toEqual([]);
   expect(() => buildFixtures({ now: new Date(NaN) })).toThrow(/valid date/);
+});
+
+it("uses custom replay settings accepted by the actual game creation validator", () => {
+  const custom = fixtures.summaries.find((summary) => summary.customGameSettings.enabled);
+  expect(customGameSettingsSchema.safeParse(custom.customGameSettings).success).toBe(true);
 });

@@ -170,7 +170,7 @@ const normalizeSummary = (source, id, date, roster, mode) => {
   };
   summary.customGameSettings = {
     enabled: mode === "custom",
-    powers: [null, null, "investigation", "execution", "execution"],
+    powers: [null, null, "investigate", "bullet", "bullet"],
     hitlerZone: 3,
     vetoZone: 5,
     fascistCount: summary.players.filter((player) => player.role === "fascist").length,
