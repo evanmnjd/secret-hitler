@@ -37,6 +37,9 @@ pnpm install
 
 For a separate database with demo logins, populated profiles, replays, moderation
 history and leaderboards, see [Local test environment](docs/local-testing.md).
+For everyday startup, open `Start Local Test.cmd` on Windows or
+`Start Local Test.command` on macOS; the launcher prepares the local setup and
+opens your browser automatically.
 With MongoDB and Redis running, use `corepack pnpm local:seed`, then
 `corepack pnpm local:test`. The local launcher selects a dedicated test database
 and binds only to your computer; the existing development commands below remain

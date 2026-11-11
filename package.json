@@ -140,7 +140,8 @@
     "local:test": "node scripts/local-testing/start.js",
     "local:services": "docker compose -f compose.local-testing.yaml up -d",
     "local:services:stop": "docker compose -f compose.local-testing.yaml down",
-    "local:players": "node scripts/local-testing/players.js"
+    "local:players": "node scripts/local-testing/players.js",
+    "local:launch": "node scripts/local-testing/launch.js"
   },
   "jest": {
     "setupFilesAfterEnv": [
