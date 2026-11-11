@@ -134,7 +134,13 @@
     "lint:fix": "biome check . --write && oxlint --fix .",
     "ca": "git add -A && pnpm lint:fix && concurrently --kill-others-on-fail --prefix \"[{name}]\" -n lint,test,build \"pnpm lint\" \"pnpm test\" \"pnpm build\"",
     "build-css:web": "sass --silence-deprecation=import,global-builtin,color-functions,function-units,slash-div src/scss/style-web.scss public/styles/style-web.css",
-    "build-css:dark": "sass --silence-deprecation=import,global-builtin,color-functions,function-units,slash-div src/scss/style-dark.scss public/styles/style-dark.css"
+    "build-css:dark": "sass --silence-deprecation=import,global-builtin,color-functions,function-units,slash-div src/scss/style-dark.scss public/styles/style-dark.css",
+    "local:seed": "node scripts/local-testing/seed.js",
+    "local:clean": "node scripts/local-testing/seed.js --clean",
+    "local:test": "node scripts/local-testing/start.js",
+    "local:services": "docker compose -f compose.local-testing.yaml up -d",
+    "local:services:stop": "docker compose -f compose.local-testing.yaml down",
+    "local:players": "node scripts/local-testing/players.js"
   },
   "jest": {
     "setupFilesAfterEnv": [

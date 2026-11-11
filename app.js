@@ -27,7 +27,7 @@ let store;
 if (process.env.NODE_ENV !== "production") {
   const MongoDBStore = require("connect-mongodb-session")(session);
   store = new MongoDBStore({
-    uri: "mongodb://localhost:27017/secret-hitler-app",
+    uri: process.env.MONGO_URL || "mongodb://localhost:27017/secret-hitler-app",
     collection: "sessions",
   });
 } else {

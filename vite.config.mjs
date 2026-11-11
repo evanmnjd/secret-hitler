@@ -7,6 +7,7 @@ import { defineConfig } from "vite";
 // the exact paths the pug views (layout.pug / layout-no-menu.pug) already load.
 // React 16 has no automatic JSX runtime, so the plugin runs in classic mode.
 export default defineConfig({
+  envDir: process.env.NODE_ENV === "development" && process.env.SHIO_LOCAL_TESTING === "1" ? false : undefined,
   // Many client files are .js but contain JSX (the old webpack ran babel on .js too),
   // so widen the plugin's transform to cover .js, not just .jsx.
   plugins: [react({ jsxRuntime: "classic", include: /\.(js|jsx)$/ })],

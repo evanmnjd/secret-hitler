@@ -35,6 +35,13 @@ pnpm install
 
 ## Running in dev mode
 
+For a separate database with demo logins, populated profiles, replays, moderation
+history and leaderboards, see [Local test environment](docs/local-testing.md).
+With MongoDB and Redis running, use `corepack pnpm local:seed`, then
+`corepack pnpm local:test`. The local launcher selects a dedicated test database
+and binds only to your computer; the existing development commands below remain
+available.
+
 **Start development:**
 
 Start the redis server.
