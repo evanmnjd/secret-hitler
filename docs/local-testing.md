@@ -43,6 +43,34 @@ those ports. The compose project has its own persistent volumes.
 
 ## Populate the database and run the app
 
+For everyday use, open the launcher in the project folder:
+
+| Computer | Launcher |
+| --- | --- |
+| Windows | Double-click `Start Local Test.cmd` |
+| macOS | Double-click `Start Local Test.command` |
+| Linux | Run `Start Local Test.sh` in a terminal, or choose Run in Terminal in your file manager |
+
+It installs/updates this checkout's dependencies, starts missing default MongoDB
+or Redis services through Docker Compose when needed, seeds the demo data without
+resetting an existing dataset, starts the app and opens your browser when ready.
+Keep its window open while testing; Ctrl+C stops the app. Database services and
+saved data remain available for the next launch.
+
+Node.js and Corepack must be installed once. If you use Docker for the database
+services, open Docker Desktop first. If MongoDB and Redis already run through
+your existing setup, the launcher reuses them. It never replaces or stops an
+already-running database service. Custom service ports must already be running.
+If another app occupies the selected web port, close it first or use
+`LOCAL_TEST_PORT` as described below.
+
+There is **no hosting fee** for this local setup. It runs on your own computer,
+which must stay on while you use it. You do not need Render, Atlas, a paid hosting
+plan or a domain for local testing.
+
+The same launcher can also be started with `corepack pnpm local:launch`. To use
+the individual steps manually instead:
+
 ```sh
 corepack pnpm local:seed
 corepack pnpm local:test
