@@ -1,4 +1,5 @@
 import React from "react";
+import StaffAccountBanStatus from "./StaffAccountBanStatus";
 import moment from "moment";
 import $ from "jquery";
 import PropTypes from "prop-types";
@@ -618,6 +619,11 @@ export default class Moderation extends React.Component {
         >
           Ban user
         </button>
+        <StaffAccountBanStatus
+          socket={socket}
+          username={playerInputText || selectedUser}
+          staffRole={userInfo?.staffRole}
+        />
         <button
           className={
             (selectedUser || playerInputText) && actionTextValue

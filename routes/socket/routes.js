@@ -71,6 +71,7 @@ const { selectPlayerToAssassinate } = require("./game/assassination");
 const { instrumentSocket } = require("./bandwidth-diagnostics");
 const { recordSocketConnection, recordSocketDisconnect, recordUserListRequest } = require("./abuse-monitor");
 const mongoose = require("mongoose");
+const { handleAccountBanStatus } = require("./user-events/mod-account-ban-status");
 const { ensureNewPlayerLobby, shouldSurviveEmptyPregame } = require("./system-lobbies/new-player");
 
 let modUserNames = [],
@@ -734,6 +735,9 @@ module.exports.socketRoutes = () => {
         if (authenticated && (isAEM || isTrial)) {
           sendModInfo(games, socket, count, isTrial, isAEM);
         }
+      });
+      socket.on("getAccountBanStatus", (request, callback) => {
+        return handleAccountBanStatus(socket, request, callback);
       });
       socket.on("subscribeModChat", (uid) => {
         // This handler isn't zod-hardened yet and mutates live game state inside an async .then with no
