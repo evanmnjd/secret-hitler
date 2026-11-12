@@ -2,6 +2,7 @@ import React from "react";
 import moment from "moment";
 import $ from "jquery";
 import PropTypes from "prop-types";
+import StaffAccountIPs from "./StaffAccountIPs";
 import classnames from "classnames";
 import Checkbox from "semantic-ui-checkbox";
 import { compareModLogEntries, formatModAction } from "./mod-log-sorting";
@@ -737,6 +738,11 @@ export default class Moderation extends React.Component {
         >
           See Warnings
         </button>
+        <StaffAccountIPs
+          socket={socket}
+          username={playerInputText || selectedUser}
+          staffRole={userInfo && userInfo.staffRole}
+        />
         <div className="ui horizontal divider">Revoke Access</div>
         <button
           className={
