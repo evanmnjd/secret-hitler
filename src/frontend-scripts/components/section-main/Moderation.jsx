@@ -6,6 +6,7 @@ import classnames from "classnames";
 import Checkbox from "semantic-ui-checkbox";
 import { compareModLogEntries, formatModAction } from "./mod-log-sorting";
 import { Form, Header, Button, Modal } from "semantic-ui-react";
+import { needsAccountCheck, canCheckAccounts } from "./mod-account-action-check";
 
 $.fn.checkbox = Checkbox;
 
@@ -47,6 +48,9 @@ export default class Moderation extends React.Component {
     showGameIcons: true,
     lagMeterStatus: "",
     tableCollapsed: false,
+    accountActionCheckPending: false,
+    accountActionConfirmation: null,
+    accountActionError: "",
   };
 
   componentDidMount() {
@@ -228,11 +232,125 @@ export default class Moderation extends React.Component {
 
   componentWillUnmount() {
     const { socket } = this.props;
+    this.invalidateAccountCheck();
 
     this.cancelModLogRequest();
     socket.off("modInfo");
     socket.off("modInfoError");
     socket.off("lagTestResults");
+  }
+
+  accountActionDraft = () =>
+    JSON.stringify([
+      this.state.selectedUser,
+      this.state.playerInputText,
+      this.state.actionTextValue,
+      this.state.nonSeasonalSetStats,
+      this.props.userInfo?.userName,
+      this.props.userInfo?.staffRole,
+    ]);
+
+  invalidateAccountCheck = () => {
+    clearTimeout(this.accountCheckTimer);
+    this.accountCheckId = (this.accountCheckId || 0) + 1;
+    this.accountCheckBusy = false;
+  };
+
+  componentDidUpdate() {
+    if (this.accountCheckDraft && this.accountCheckDraft !== this.accountActionDraft()) {
+      this.invalidateAccountCheck();
+      this.accountCheckDraft = null;
+      this.setState({ accountActionCheckPending: false, accountActionConfirmation: null, accountActionError: "" });
+    }
+  }
+
+  sendCheckedAccountAction = (payload, draft) => {
+    if (draft && draft !== this.accountActionDraft()) return;
+    this.invalidateAccountCheck();
+    this.accountCheckDraft = null;
+    this.props.socket.emit("updateModAction", payload);
+    this.setState({
+      selectedUser: "",
+      actionTextValue: "",
+      playerInputText: "",
+      accountActionCheckPending: false,
+      accountActionConfirmation: null,
+      accountActionError: "",
+    });
+  };
+
+  submitModAction = (payload) => {
+    if (!needsAccountCheck(payload)) {
+      this.sendCheckedAccountAction(payload);
+      return;
+    }
+    if (!canCheckAccounts(this.props.userInfo?.staffRole)) return;
+    if (this.accountCheckBusy || this.state.accountActionConfirmation) return;
+    this.accountCheckBusy = true;
+    const id = (this.accountCheckId || 0) + 1;
+    this.accountCheckId = id;
+    const draft = this.accountActionDraft();
+    this.accountCheckDraft = draft;
+    const username = payload.userName.trim();
+    this.setState({ accountActionCheckPending: true, accountActionError: "" });
+    const finish = (response) => {
+      if (this.accountCheckId !== id || draft !== this.accountActionDraft()) return;
+      clearTimeout(this.accountCheckTimer);
+      this.accountCheckId++;
+      this.accountCheckBusy = false;
+      this.setState({ accountActionCheckPending: false });
+      if (!response?.success || response.username !== username || typeof response.exists !== "boolean") {
+        this.accountCheckDraft = null;
+        this.setState({ accountActionError: response?.error || "Unable to check the account. Please try again." });
+      } else if (response.exists) {
+        this.sendCheckedAccountAction(payload, draft);
+      } else {
+        this.setState({ accountActionConfirmation: { payload, username, draft } });
+      }
+    };
+    this.accountCheckTimer = setTimeout(
+      () => finish({ success: false, error: "The account check timed out. Please try again." }),
+      10000
+    );
+    this.props.socket.emit("checkModAccountExists", { username }, finish);
+  };
+
+  cancelAccountAction = () => {
+    this.invalidateAccountCheck();
+    this.accountCheckDraft = null;
+    this.setState({ accountActionCheckPending: false, accountActionConfirmation: null, accountActionError: "" });
+  };
+
+  renderAccountActionCheck() {
+    if (!canCheckAccounts(this.props.userInfo?.staffRole)) return null;
+    const { accountActionCheckPending, accountActionConfirmation, accountActionError } = this.state;
+    return (
+      <React.Fragment>
+        {accountActionCheckPending && <p role="status">Checking account…</p>}
+        {accountActionError && <p role="alert">{accountActionError}</p>}
+        <Modal open={Boolean(accountActionConfirmation)} size="small" onClose={this.cancelAccountAction}>
+          <Modal.Header>Account not found</Modal.Header>
+          <Modal.Content>
+            <p>
+              The account <strong>{accountActionConfirmation?.username}</strong> does not exist. Check the spelling
+              before proceeding. You can still submit this action using the site's existing behavior.
+            </p>
+          </Modal.Content>
+          <Modal.Actions>
+            <Button onClick={this.cancelAccountAction}>Cancel</Button>
+            <Button
+              primary
+              onClick={() => {
+                const confirmation = this.state.accountActionConfirmation;
+                if (confirmation) this.sendCheckedAccountAction(confirmation.payload, confirmation.draft);
+              }}
+            >
+              Proceed anyway
+            </Button>
+          </Modal.Actions>
+        </Modal>
+      </React.Fragment>
+    );
   }
 
   togglePlayerList = () => {
@@ -540,7 +658,7 @@ export default class Moderation extends React.Component {
       } else if (action === "resetServer" && !this.state.resetServerCount) {
         this.setState({ resetServerCount: 1 });
       } else {
-        socket.emit("updateModAction", {
+        this.submitModAction({
           modName: userInfo.userName,
           userName:
             action === "deleteGame"
@@ -551,11 +669,6 @@ export default class Moderation extends React.Component {
           ip: playerInputText ? "" : selectedUser ? userList.find((user) => user.userName === selectedUser).ip : "",
           comment: actionTextValue,
           action,
-        });
-        this.setState({
-          selectedUser: "",
-          actionTextValue: "",
-          playerInputText: "",
         });
       }
     };
@@ -1522,6 +1635,7 @@ export default class Moderation extends React.Component {
 
     return (
       <section className="moderation">
+        {this.renderAccountActionCheck()}
         <a href="#/">
           <i className="remove icon" />
         </a>
