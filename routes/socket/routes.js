@@ -63,6 +63,7 @@ const {
 const { saveAndDeleteGame } = require("./game/end-game");
 const { games, emoteList, cloneSettingsFromRedis, modDMs, getStaffList } = require("./models");
 const Account = require("../../models/account");
+const { handleAccountIPLookup } = require("./user-events/mod-account-ips");
 const { TOU_CHANGES } = require("../../src/frontend-scripts/node-constants.js");
 const version = require("../../version");
 const https = require("https");
@@ -418,6 +419,10 @@ module.exports.socketRoutes = () => {
         } else {
           socket.emit("sendAlert", `Are you sure you're supposed to be doing that?`);
         }
+      });
+
+      socket.on("lookupAccountIPs", (data, callback) => {
+        handleAccountIPLookup(socket, data, callback);
       });
 
       // user-events
