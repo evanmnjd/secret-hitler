@@ -11,6 +11,7 @@ const nonAccountActions = new Set([
   "makeBypass",
   "setSticky",
   "broadcast",
+  "clearGenchat",
   "getFilteredData",
   "enableAccountCreation",
   "disableAccountCreation",

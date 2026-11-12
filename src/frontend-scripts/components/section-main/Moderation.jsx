@@ -311,7 +311,7 @@ export default class Moderation extends React.Component {
         {accountActionError && <p role="alert">{accountActionError}</p>}
         <Modal open={Boolean(accountActionConfirmation)} size="small" onClose={this.cancelAccountAction}>
           <Modal.Header>Account not found</Modal.Header>
-          <Modal.Content>
+          <Modal.Content style={{ color: "#222" }}>
             <p>
               The account <strong>{accountActionConfirmation?.username}</strong> does not exist. Check the spelling
               before proceeding. You can still submit this action using the site's existing behavior.
