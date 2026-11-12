@@ -89,6 +89,7 @@ it.each([
   "resetServer",
   "regatherAEMList",
   "makeBypass",
+  "clearGenchat",
 ])("does not preflight the existing %s path", (action) => {
   const h = make();
   h.wrapper.instance().submitModAction(payload(action));
