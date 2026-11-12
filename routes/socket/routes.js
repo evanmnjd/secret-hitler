@@ -27,6 +27,7 @@ const {
   handleAddNewModDMChat,
 } = require("./user-events");
 const { handleAEMMessages } = require("./util");
+const { handleModAccountExistence } = require("./user-events/mod-account-existence");
 const { handleMuteNeighborChat, handleReportNeighborChat } = require("./user-events/neighbor-chat");
 const {
   sendPlayerNotes,
@@ -590,6 +591,9 @@ module.exports.socketRoutes = () => {
         handleUpdatedTheme(socket, passport, data);
       });
 
+      socket.on("checkModAccountExists", (request, callback) => {
+        handleModAccountExistence(socket, request, callback);
+      });
       socket.on("updateModAction", (data) => {
         if (authenticated && isAEM) {
           handleModerationAction(socket, passport, data, false, modUserNames, editorUserNames.concat(adminUserNames));

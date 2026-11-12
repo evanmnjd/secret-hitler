@@ -34,6 +34,9 @@ describe("Moderation", () => {
       showActions: true,
       showGameIcons: true,
       tableCollapsed: false,
+      accountActionCheckPending: false,
+      accountActionConfirmation: null,
+      accountActionError: "",
       lagMeterStatus: "",
     };
 
