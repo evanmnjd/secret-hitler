@@ -19,6 +19,9 @@ const moment = require("moment");
 const { idQuerySchema, usernameQuerySchema, cardbackBodySchema } = require("./index.schema");
 const bandwidthDiagnostics = require("./bandwidth-diagnostics-state");
 const { STARTING_PUBLIC_RATING } = require("./socket/rating/public-ladder");
+const cacheBustAssets =
+  process.env.NODE_ENV === "production" ||
+  (process.env.NODE_ENV === "development" && process.env.SHIO_LOCAL_TESTING === "1");
 
 /**
  * @param {object} req - express request object.
@@ -53,7 +56,7 @@ module.exports = () => {
       renderObj.username = req.user.username;
     }
 
-    if (process.env.NODE_ENV === "production") {
+    if (cacheBustAssets) {
       renderObj.prodCacheBustToken = prodCacheBustToken.prodCacheBustToken;
     }
 
@@ -195,7 +198,7 @@ module.exports = () => {
           tertiaryTextColor: `hsl(${textHue}, ${textSaturation}%, ${textLightness > 50 ? textLightness - 14 : textLightness + 14}%)`,
         };
 
-        if (process.env.NODE_ENV === "production") {
+        if (cacheBustAssets) {
           gameObj.prodCacheBustToken = prodCacheBustToken.prodCacheBustToken;
         }
 
@@ -262,7 +265,7 @@ module.exports = () => {
       tertiaryTextColor,
     };
 
-    if (process.env.NODE_ENV === "production") {
+    if (cacheBustAssets) {
       gameObj.prodCacheBustToken = prodCacheBustToken.prodCacheBustToken;
     }
 

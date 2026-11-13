@@ -21,6 +21,7 @@ const { expandAndSimplify } = require("./routes/socket/ip-obf");
 const { CARDBACK_DIR } = require("./routes/cardback-store");
 const { getRedisClientOptions } = require("./routes/redis-client-options");
 const httpBandwidthDiagnostics = require("./routes/http-bandwidth-diagnostics");
+const localTesting = process.env.NODE_ENV === "development" && process.env.SHIO_LOCAL_TESTING === "1";
 
 let store;
 
@@ -132,7 +133,7 @@ app.get(
 // dotfiles:"deny" keeps the private ".diagnostics" dir the crash/heap logger nests inside this mount
 // (see bin/diagnostics.js) unreadable over HTTP — those files can contain session data.
 app.use("/images/custom-cardbacks", express.static(CARDBACK_DIR, { maxAge: 86400000 * 28, dotfiles: "deny" }));
-app.use(express.static(`${__dirname}/public`, { maxAge: 86400000 * 28 }));
+app.use(express.static(`${__dirname}/public`, { maxAge: localTesting ? 0 : 86400000 * 28 }));
 app.use(
   helmet.frameguard({
     action: "deny",
