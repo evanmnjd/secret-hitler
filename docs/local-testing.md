@@ -115,7 +115,7 @@ password, counts and replay identifiers.
 | Change | Local scenario |
 | --- | --- |
 | Replay button frame | Open `http://127.0.0.1:8080/game/#/replay/LocalDemoGame25`; resize the browser and toggle deck, roles, chat and playback. |
-| Public replay neighbor chat | The same replay contains three whispers from two pairs. Compare participant, unrelated and logged-out views; use Whispers only. |
+| Public replay neighbor chat | The same replay contains three whispers from two pairs. Public chat appears by default; use Show whispers to add conversations and Hide public chat for whispers only. Compare participant, unrelated and logged-out views. |
 | Silent-neighbor replay | `LocalDemoGame26` is the saved silent-neighbor fixture. Live silent chat behavior requires creating a new lobby. |
 | Veto/legacy compatibility | Replays `LocalDemoGame30`, `LocalDemoGame31` and `LocalDemoGame35` cover two veto cases and a legacy replay. |
 | Mod sorting and pagination | Log in as `LocalDemoAdmin`, open Moderation, sort all six headers and page through the 1,500 synthetic actions. Dates span several weeks. |
