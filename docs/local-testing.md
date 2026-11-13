@@ -230,3 +230,9 @@ globally install the other checkout's app dependencies. Branches without these
 tooling commits won't have `local:*` commands. Use the combined test branch for
 the easiest all-fixes review, or cherry-pick the tooling commit onto your own
 development branch.
+
+After updating the checkout, stop the app with Ctrl+C and open the launcher again
+to rebuild the browser files. Local testing adds a new asset URL token on every
+server start and revalidates public files on each request, so an older cached
+interface does not hide newly added controls. This applies only to local testing;
+production and ordinary development retain their existing cache behavior.
