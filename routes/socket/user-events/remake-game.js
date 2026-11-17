@@ -212,6 +212,7 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
       enactedPolicies: [],
     };
     newGame.private = {
+      isRemakeLobby: true,
       reports: {},
       unSeatedGameChats: [],
       commandChats: {},

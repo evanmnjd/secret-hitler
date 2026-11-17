@@ -34,6 +34,73 @@ const displayWaitingForPlayers = (game) => {
   }
 };
 
+const startNonTournamentGame = (game, skipCountdown = false) => {
+  if (game.general.blindMode) {
+    const shuffledAdjectives = _.shuffle(adjectives);
+    game.general.replacementNames = _.shuffle(animals)
+      .slice(0, game.publicPlayersState.length)
+      .map(
+        (animal, index) =>
+          `${shuffledAdjectives[index].charAt(0).toUpperCase()}${shuffledAdjectives[index].slice(1)} ${animal}`
+      );
+  }
+  game.remakeData = game.publicPlayersState.map((player) => ({
+    userName: player.userName,
+    isRemaking: false,
+    timesVoted: 0,
+    remakeTime: 0,
+  }));
+  if (skipCountdown) startGame(game, { skipCountdown: true });
+  else startGame(game);
+};
+
+const cancelRemakeCountdown = (game) => {
+  clearInterval(game.private.remakeCountdownTimer);
+  delete game.private.remakeCountdownTimer;
+};
+
+const checkRemakeStart = (game) => {
+  const canStart = () =>
+    game.publicPlayersState.length >= game.general.minPlayersCount &&
+    game.publicPlayersState.length <= game.general.maxPlayersCount &&
+    !game.general.excludedPlayerCount.includes(game.publicPlayersState.length);
+
+  if (!canStart()) {
+    cancelRemakeCountdown(game);
+    game.general.status = displayWaitingForPlayers(game);
+    return;
+  }
+  if (game.gameState.isStarted || game.private.remakeCountdownTimer != null) return;
+
+  // Remake seats are carried over rather than freshly chosen. Keep this a
+  // waiting lobby, including its normal Leave behavior, for the full 20 seconds.
+  let remaining = 20;
+  game.general.status = "Game starts in 20 seconds.";
+  sendCommandChatsUpdate(game);
+  game.private.remakeCountdownTimer = setInterval(() => {
+    if (games[game.general.uid] !== game || game.isBeingTornDown || game.gameState.isTracksFlipped) {
+      cancelRemakeCountdown(game);
+      return;
+    }
+    if (!canStart()) {
+      cancelRemakeCountdown(game);
+      game.general.status = displayWaitingForPlayers(game);
+      sendCommandChatsUpdate(game);
+      return;
+    }
+    if (game.gameState.isGameFrozen) return;
+    remaining--;
+    if (!remaining) {
+      cancelRemakeCountdown(game);
+      game.gameState.isStarted = true;
+      startNonTournamentGame(game, true);
+    } else {
+      game.general.status = `Game starts in ${remaining} second${remaining === 1 ? "" : "s"}.`;
+      sendCommandChatsUpdate(game);
+    }
+  }, 1000)[Symbol.toPrimitive]();
+};
+
 /**
  * @param {object} game - game to act on.
  */
@@ -130,23 +197,7 @@ const startCountdown = (game) => {
         startGame(gameB);
         sendGameList();
       } else {
-        if (game.general.blindMode) {
-          const _shuffledAdjectives = _.shuffle(adjectives);
-
-          game.general.replacementNames = _.shuffle(animals)
-            .slice(0, game.publicPlayersState.length)
-            .map(
-              (animal, index) =>
-                `${_shuffledAdjectives[index].charAt(0).toUpperCase()}${_shuffledAdjectives[index].slice(1)} ${animal}`
-            );
-        }
-        game.remakeData = game.publicPlayersState.map((player) => ({
-          userName: player.userName,
-          isRemaking: false,
-          timesVoted: 0,
-          remakeTime: 0,
-        }));
-        startGame(game);
+        startNonTournamentGame(game);
       }
     } else {
       game.general.status = game.general.isTourny
@@ -168,6 +219,11 @@ const checkStartConditions = (game) => {
 
   if (game.electionCount !== 0) {
     game.electionCount = 0;
+  }
+
+  if (game.private.isRemakeLobby && !game.general.isTourny) {
+    checkRemakeStart(game);
+    return;
   }
 
   if (
