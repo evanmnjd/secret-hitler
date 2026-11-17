@@ -2,6 +2,7 @@ import React from "react";
 import { shallow } from "enzyme";
 import StaffAccountIPs from "./StaffAccountIPs";
 import Moderation from "./Moderation";
+import StaffLookupDialog from "../reusable/StaffLookupDialog";
 
 const make = (props = {}) => {
   const socket = { emit: jest.fn() };
@@ -32,16 +33,18 @@ it.each([
 
 it("queries the typed account and labels independently unavailable fields without changing the parent draft", () => {
   const { wrapper, socket, lookup } = make({ username: " Legacy " });
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
   lookup();
   expect(socket.emit).toHaveBeenCalledWith("lookupAccountIPs", { username: "Legacy" }, expect.any(Function));
   expect(wrapper.find("button").prop("disabled")).toBe(true);
   wrapper.instance().lookup();
   expect(socket.emit).toHaveBeenCalledTimes(1);
   socket.emit.mock.calls[0][2](result);
-  expect(wrapper.text()).toContain("Signup IP");
-  expect(wrapper.text()).toContain(result.signupIP);
-  expect(wrapper.text()).toContain("Last connected IP");
-  expect(wrapper.text()).toContain("Unavailable");
+  expect(wrapper.find(StaffLookupDialog).prop("title")).toBe("Account IPs");
+  expect(wrapper.find('[role="status"]').text()).toContain("Signup IP");
+  expect(wrapper.find('[role="status"]').text()).toContain(result.signupIP);
+  expect(wrapper.find('[role="status"]').text()).toContain("Last connected IP");
+  expect(wrapper.find('[role="status"]').text()).toContain("Unavailable");
   expect(wrapper.props().className).toBe("staff-account-ip-lookup");
   wrapper.unmount();
 });
@@ -50,11 +53,45 @@ it("reports no account and lookup errors without suggesting that missing IP fiel
   const { wrapper, socket, lookup } = make();
   lookup();
   socket.emit.mock.calls[0][2]({ success: true, exists: false, username: "Legacy" });
-  expect(wrapper.text()).toContain("does not exist");
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(1);
+  expect(wrapper.find('[role="status"]').text()).toContain("does not exist");
   lookup();
   socket.emit.mock.calls[1][2]({ success: false, error: "Not authorized" });
   expect(wrapper.find('[role="alert"]').text()).toBe("Not authorized");
-  expect(wrapper.text()).not.toContain("does not exist");
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
+  wrapper.unmount();
+});
+
+it.each([result, { success: true, exists: false, username: "Legacy" }])(
+  "dismisses the result popup without changing the typed target or repeating the lookup: %j",
+  (response) => {
+    const { wrapper, socket, lookup } = make();
+    lookup();
+    const receive = socket.emit.mock.calls[0][2];
+    receive(response);
+    wrapper.find(StaffLookupDialog).prop("onDismiss")();
+    expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
+    expect(wrapper.find('[role="status"]')).toHaveLength(0);
+    expect(wrapper.instance().props.username).toBe("Legacy");
+    expect(socket.emit).toHaveBeenCalledTimes(1);
+    receive(response);
+    expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
+    wrapper.unmount();
+  }
+);
+
+it.each([
+  { username: "Other" },
+  { staffRole: "trialmod" },
+  { socket: { emit: jest.fn() } },
+])("closes a displayed result after its target, role or connection changes: %j", (props) => {
+  const { wrapper, socket, lookup } = make();
+  lookup();
+  socket.emit.mock.calls[0][2](result);
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(1);
+  wrapper.setProps(props);
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
+  expect(wrapper.state("result")).toBe(null);
   wrapper.unmount();
 });
 
