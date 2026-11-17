@@ -879,20 +879,8 @@ const beginGame = (game) => {
 /**
  * @param {object} game - game to act on.
  */
-module.exports = (game) => {
+module.exports = (game, { skipCountdown = false } = {}) => {
   game.gameState.isTracksFlipped = true;
-  let startGamePause = process.env.NODE_ENV === "development" ? 1 : 5;
-
-  const countDown = setInterval(() => {
-    if (!startGamePause) {
-      clearInterval(countDown);
-      beginGame(game);
-    } else {
-      game.general.status = `Game starts in ${startGamePause} second${startGamePause === 1 ? "" : "s"}.`;
-      sendInProgressGameUpdate(game, true);
-      startGamePause--;
-    }
-  }, 1000)[Symbol.toPrimitive]();
 
   game.private.hiddenInfoChat = [];
   game.private.hiddenInfoSubscriptions = [];
@@ -918,5 +906,23 @@ module.exports = (game) => {
     ensureNewPlayerLobby().catch((err) => {
       console.error("Could not create the next New Player Game after a cohort started:", err);
     });
+  }
+
+  // Remade lobbies have already completed their cancellable 20-second wait.
+  // Initialize the roster and private state above before dealing roles.
+  if (skipCountdown) {
+    beginGame(game);
+  } else {
+    let startGamePause = process.env.NODE_ENV === "development" ? 1 : 5;
+    const countDown = setInterval(() => {
+      if (!startGamePause) {
+        clearInterval(countDown);
+        beginGame(game);
+      } else {
+        game.general.status = `Game starts in ${startGamePause} second${startGamePause === 1 ? "" : "s"}.`;
+        sendInProgressGameUpdate(game, true);
+        startGamePause--;
+      }
+    }, 1000)[Symbol.toPrimitive]();
   }
 };
