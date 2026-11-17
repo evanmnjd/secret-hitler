@@ -1,6 +1,7 @@
 import React from "react";
 import { shallow } from "enzyme";
 import StaffAccountBanStatus from "./StaffAccountBanStatus";
+import StaffLookupDialog from "../reusable/StaffLookupDialog";
 
 const make = (props = {}) => {
   const socket = { emit: jest.fn() };
@@ -42,6 +43,7 @@ it("requires a username but no action comment and prevents duplicate clicks", ()
   expect(socket.emit).toHaveBeenCalledWith("getAccountBanStatus", { username: "Alice" }, expect.any(Function));
   expect(wrapper.find("button").prop("disabled")).toBe(true);
   reply(socket, { success: true, username: "Alice", exists: true, isBanned: true });
+  expect(wrapper.find(StaffLookupDialog).prop("title")).toBe("Account ban status");
   expect(wrapper.find("[role='status']").text()).toBe("Alice is banned.");
   wrapper.unmount();
 });
@@ -53,8 +55,27 @@ it.each([
   const { wrapper, socket } = make();
   wrapper.find("button").simulate("click");
   reply(socket, response);
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(1);
   expect(wrapper.find("[role='status']").text()).toBe(text);
   expect(wrapper.find("[role='alert']")).toHaveLength(0);
+  wrapper.unmount();
+});
+
+it("dismisses the popup without changing the target or making another request and permits reopening", () => {
+  const { wrapper, socket } = make();
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
+  wrapper.find("button").simulate("click");
+  reply(socket, { success: true, username: "Alice", exists: true, isBanned: true });
+  const popup = wrapper.find(StaffLookupDialog);
+  expect(popup.find("[role='status']").text()).toBe("Alice is banned.");
+  popup.prop("onDismiss")();
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
+  expect(wrapper.find("[role='status']")).toHaveLength(0);
+  expect(wrapper.instance().props.username).toBe("Alice");
+  expect(socket.emit).toHaveBeenCalledTimes(1);
+  wrapper.find("button").simulate("click");
+  socket.emit.mock.calls[1][2]({ success: true, username: "Alice", exists: true, isBanned: false });
+  expect(wrapper.find(StaffLookupDialog).find("[role='status']").text()).toBe("Alice is not banned.");
   wrapper.unmount();
 });
 
@@ -62,6 +83,7 @@ it("does not infer not-found from a failed or malformed lookup", () => {
   const { wrapper, socket } = make();
   wrapper.find("button").simulate("click");
   reply(socket, { success: false, error: "Unable to check right now." });
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
   expect(wrapper.find("[role='status']")).toHaveLength(0);
   expect(wrapper.find("[role='alert']").text()).toBe("Unable to check right now.");
   wrapper.find("button").simulate("click");
@@ -81,6 +103,7 @@ it("ignores stale replies and clears old results when the target changes", () =>
   socket.emit.mock.calls[1][2]({ success: true, username: "Bob", exists: true, isBanned: false });
   expect(wrapper.find("[role='status']").text()).toBe("Bob is not banned.");
   wrapper.setProps({ username: "Carol" });
+  expect(wrapper.find(StaffLookupDialog)).toHaveLength(0);
   expect(wrapper.find("[role='status']")).toHaveLength(0);
   wrapper.unmount();
 });

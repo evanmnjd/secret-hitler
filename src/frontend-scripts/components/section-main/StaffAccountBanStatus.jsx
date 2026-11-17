@@ -1,5 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
+import StaffLookupDialog from "../reusable/StaffLookupDialog";
 
 const roles = new Set(["moderator", "editor", "admin"]);
 
@@ -64,11 +65,17 @@ export default class StaffAccountBanStatus extends React.Component {
         </button>
         {error && <p role="alert">{error}</p>}
         {result && (
-          <p role="status">
-            {!result.exists
-              ? `Account not found: ${result.username}`
-              : `${result.username} is ${result.isBanned ? "banned" : "not banned"}.`}
-          </p>
+          <StaffLookupDialog
+            id="staff-account-ban-status-dialog"
+            title="Account ban status"
+            onDismiss={() => this.setState({ result: null })}
+          >
+            <p role="status">
+              {!result.exists
+                ? `Account not found: ${result.username}`
+                : `${result.username} is ${result.isBanned ? "banned" : "not banned"}.`}
+            </p>
+          </StaffLookupDialog>
         )}
       </div>
     );
