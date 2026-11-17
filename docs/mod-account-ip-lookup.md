@@ -4,6 +4,8 @@
 signup IP and last-connected IP separately, in the same obfuscated form used by
 the moderation interface. Each missing or malformed historical field displays
 “Unavailable”; a nonexistent account has a distinct message.
+Results appear in a themed popup matching **See Warnings**, with a **Dismiss**
+button. Closing it preserves the moderation form's username and comment.
 
 The lookup reads the Account directly. It does not require a profile or any
 completed public games, and does not create a profile, modify the account,

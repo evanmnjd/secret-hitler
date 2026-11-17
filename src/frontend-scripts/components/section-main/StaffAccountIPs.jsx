@@ -1,5 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
+import StaffLookupDialog from "../reusable/StaffLookupDialog";
 
 const allowedRoles = new Set(["moderator", "editor", "admin"]);
 
@@ -70,21 +71,27 @@ export default class StaffAccountIPs extends React.Component {
         </button>
         {error && <p role="alert">{error}</p>}
         {result && (
-          <div role="status" style={{ padding: "8px 0", overflowWrap: "anywhere" }}>
-            {result.exists ? (
-              <>
-                <strong>Account IPs for {result.username}</strong>
-                <dl style={{ margin: "8px 0" }}>
-                  <dt>Signup IP</dt>
-                  <dd style={{ marginLeft: "12px", userSelect: "text" }}>{result.signupIP || "Unavailable"}</dd>
-                  <dt>Last connected IP</dt>
-                  <dd style={{ marginLeft: "12px", userSelect: "text" }}>{result.lastConnectedIP || "Unavailable"}</dd>
-                </dl>
-              </>
-            ) : (
-              <>Account “{result.username}” does not exist.</>
-            )}
-          </div>
+          <StaffLookupDialog
+            id="staff-account-ips-dialog"
+            title="Account IPs"
+            onDismiss={() => this.setState({ result: null })}
+          >
+            <div role="status" style={{ padding: "8px 0", overflowWrap: "anywhere" }}>
+              {result.exists ? (
+                <>
+                  <strong>Account IPs for {result.username}</strong>
+                  <dl style={{ margin: "8px 0" }}>
+                    <dt>Signup IP</dt>
+                    <dd style={{ marginLeft: "12px", userSelect: "text" }}>{result.signupIP || "Unavailable"}</dd>
+                    <dt>Last connected IP</dt>
+                    <dd style={{ marginLeft: "12px", userSelect: "text" }}>{result.lastConnectedIP || "Unavailable"}</dd>
+                  </dl>
+                </>
+              ) : (
+                <>Account “{result.username}” does not exist.</>
+              )}
+            </div>
+          </StaffLookupDialog>
         )}
       </div>
     );
