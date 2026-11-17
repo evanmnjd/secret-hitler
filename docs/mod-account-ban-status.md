@@ -6,6 +6,9 @@ a banned account, an existing unbanned account and a username that does not exis
 The lookup reads `Account.isBanned` directly, so accounts without profiles or
 public game history work too. A missing legacy flag means not banned.
 
+Results appear in a themed popup matching **See Warnings**, with a **Dismiss**
+button. Dismissing the popup preserves the username and moderation draft.
+
 This lookup does not change the account, create a profile, write a moderation
 action or send a notification. Existing Ban user and other moderation actions
 retain their behavior.
