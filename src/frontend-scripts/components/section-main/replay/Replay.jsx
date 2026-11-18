@@ -161,6 +161,7 @@ const Replay = ({
   allEmotes,
   hideHand: hideRolesAndHand,
   deckShown,
+  actions,
 }) => {
   const { ticks, position, game } = replay;
   const snapshot = ticks.get(position);
@@ -192,6 +193,7 @@ const Replay = ({
             <Tracks gameInfo={gameInfo} userInfo={userInfo} />
           </div>
           <div className="right-side">
+            {actions}
             {chatsShown ? (
               <ReplayGamechat userInfo={userInfo} userList={userList} gameInfo={gameInfo} allEmotes={allEmotes} />
             ) : (
@@ -306,6 +308,31 @@ export class ReplayWrapper extends React.Component {
       });
     };
 
+    const actions = (
+      <div className="replay-actions">
+        {!this.state.legacyReplay && (
+          <button className="displaydeck ui inverted green button" onClick={toggleDeck}>
+            {this.state.deckShown ? "Hide deck" : "Show deck"}
+          </button>
+        )}
+        <button className="displayroles ui inverted purple button" onClick={toggleHiddenInfo}>
+          {this.state.hiddenInfoShown ? "Hide roles/hands" : "Show roles/hands"}
+        </button>
+        <button className="displaychats ui inverted blue button" onClick={toggleChats}>
+          {this.state.chatsShown ? "Hide chats" : "Show chats"}
+          {(this.state.gameData.chats || []).some(isReplayWhisper) && (
+            <span className="replay-whisper-count">
+              {` · ${this.state.gameData.chats.filter(isReplayWhisper).length} whispers`}
+            </span>
+          )}
+        </button>
+        <button className="exit ui inverted red button" onClick={toExit}>
+          <i className="sign out icon" />
+          Exit Replay
+        </button>
+      </div>
+    );
+
     const children = (() => {
       switch (this.props.replay.status) {
         case "INITIAL":
@@ -335,6 +362,7 @@ export class ReplayWrapper extends React.Component {
               allEmotes={this.props.allEmotes}
               hideHand={!this.state.hiddenInfoShown}
               deckShown={this.state.deckShown}
+              actions={actions}
             />
           );
       }
@@ -342,28 +370,7 @@ export class ReplayWrapper extends React.Component {
 
     return (
       <section id="replay" className="ui segment">
-        <div className="replay-actions">
-          {!this.state.legacyReplay && (
-            <button className="displaydeck ui inverted green button" onClick={toggleDeck}>
-              {this.state.deckShown ? "Hide deck" : "Show deck"}
-            </button>
-          )}
-          <button className="displayroles ui inverted purple button" onClick={toggleHiddenInfo}>
-            {this.state.hiddenInfoShown ? "Hide roles/hands" : "Show roles/hands"}
-          </button>
-          <button className="displaychats ui inverted blue button" onClick={toggleChats}>
-            {this.state.chatsShown ? "Hide chats" : "Show chats"}
-            {(this.state.gameData.chats || []).some(isReplayWhisper) && (
-              <span className="replay-whisper-count">
-                {` · ${this.state.gameData.chats.filter(isReplayWhisper).length} whispers`}
-              </span>
-            )}
-          </button>
-          <button className="exit ui inverted red button" onClick={toExit}>
-            <i className="sign out icon" />
-            Exit Replay
-          </button>
-        </div>
+        {this.props.replay.status !== "READY" && actions}
         {children}
       </section>
     );
@@ -373,6 +380,7 @@ export class ReplayWrapper extends React.Component {
 export default connect(mapStateToProps, mapDispatchToProps)(ReplayWrapper);
 
 Replay.propTypes = {
+  actions: PropTypes.node,
   allEmotes: PropTypes.object,
   userInfo: PropTypes.object,
   userList: PropTypes.object,
