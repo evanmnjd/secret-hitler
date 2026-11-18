@@ -7,6 +7,7 @@ import { processEmotes } from "../../../emotes";
 import { PLAYERCOLORS } from "../../../constants";
 import NeighborChatReport from "../../reusable/NeighborChatReport";
 import { isReplayWhisper } from "../../../replay/chat";
+import { matchesReplayChat, replayChatOptions, replayChatText } from "../../../replay/chat-filters";
 
 const mapDispatchToProps = (dispatch) => ({
   loadReplay: (summary) => dispatch(loadReplay(summary)),
@@ -21,14 +22,20 @@ export class ReplayGamechat extends React.Component {
     showObserverChat: true,
     showWhispers: false,
     showPublicChat: true,
+    searchText: "",
+    selectedPlayer: "",
+    selectedPair: "",
   };
 
-  componentDidUpdate() {
-    this.scrollChats();
+  componentDidUpdate(previous) {
+    // Searching, changing filters, and moving through the board must not pull
+    // someone away from the older messages they are reading.
+    if (previous.gameInfo.chats !== this.props.gameInfo.chats) this.scrollChats();
   }
 
   handleChatScrolled = () => {
     const bar = this.scrollbar;
+    if (!bar) return;
     const scrolledFromBottom =
       bar.getValues().scrollHeight - (bar.getValues().scrollTop + bar.getValues().clientHeight - 1);
 
@@ -41,7 +48,7 @@ export class ReplayGamechat extends React.Component {
   };
 
   scrollChats() {
-    if (!this.state.lock) {
+    if (!this.state.lock && this.scrollbar) {
       this.scrollbar.scrollToBottom();
     }
   }
@@ -70,6 +77,42 @@ export class ReplayGamechat extends React.Component {
       default:
         console.log(`Unknown filter: ${filter}`);
     }
+  };
+
+  clearSearchFilters = () => {
+    this.setState({ searchText: "", selectedPlayer: "", selectedPair: "" });
+  };
+
+  orderedChats = () => {
+    const source = this.props.gameInfo.chats || [];
+    if (this.chatSource !== source) {
+      this.chatSource = source;
+      this.sortedChats = [...source].sort((a, b) => {
+        const difference = new Date(a.timestamp) - new Date(b.timestamp);
+        return difference || replayChatText(a).localeCompare(replayChatText(b));
+      });
+    }
+    return this.sortedChats;
+  };
+
+  filteredChats = () => {
+    const { gameInfo } = this.props;
+    const names = (gameInfo.publicPlayersState || []).map((player) => player.userName);
+    const { showPlayerChat, showGameChat, showObserverChat, showWhispers, showPublicChat, showFullChat } = this.state;
+    const matches = this.orderedChats().filter((chat) => {
+      const visible = isReplayWhisper(chat)
+        ? showWhispers
+        : showPublicChat &&
+          (chat.isBroadcast ||
+            (showPlayerChat && !chat.gameChat && !chat.isClaim && names.includes(chat.userName)) ||
+            (showGameChat && (chat.gameChat || chat.isClaim)) ||
+            (showObserverChat && !chat.gameChat && !names.includes(chat.userName)) ||
+            (!names.includes(chat.userName) &&
+              chat.staffRole &&
+              !["trialmod", "altmod", "veteran"].includes(chat.staffRole)));
+      return visible && matchesReplayChat(chat, this.state);
+    });
+    return { rows: showFullChat ? matches : matches.slice(-250), matchingCount: matches.length };
   };
 
   handleTimestamps(timestamp) {
@@ -121,19 +164,12 @@ export class ReplayGamechat extends React.Component {
     return elements;
   };
 
-  processChats() {
+  processChats(rows) {
     const { gameInfo, userInfo, userList } = this.props;
     const { gameSettings } = userInfo;
     const seatedUserNames = gameInfo.publicPlayersState
       ? gameInfo.publicPlayersState.map((player) => player.userName)
       : [];
-    const { showFullChat, showPlayerChat, showGameChat, showObserverChat, showWhispers, showPublicChat } = this.state;
-    const compareChatStrings = (a, b) => {
-      const stringA = typeof a.chat === "string" ? a.chat : a.chat.map((object) => object.text).join("");
-      const stringB = typeof b.chat === "string" ? b.chat : b.chat.map((object) => object.text).join("");
-
-      return stringA.localeCompare(stringB);
-    };
     const time = new Date().getTime();
     /**
      * @param {array} tournyWins - array of tournywins in epoch ms numbers (date.getTime())
@@ -192,28 +228,7 @@ export class ReplayGamechat extends React.Component {
     };
 
     if (gameInfo && gameInfo.chats) {
-      let list = [...gameInfo.chats]
-        .sort((a, b) =>
-          a.timestamp === b.timestamp ? compareChatStrings(a, b) : new Date(a.timestamp) - new Date(b.timestamp)
-        )
-        .filter((chat) => {
-          // Private conversations have their own view, independent of public chat filters.
-          if (isReplayWhisper(chat)) return showWhispers;
-          if (!showPublicChat) return false;
-          return (
-            chat.isBroadcast ||
-            (showPlayerChat && !chat.gameChat && !chat.isClaim && seatedUserNames.includes(chat.userName)) ||
-            (showGameChat && (chat.gameChat || chat.isClaim)) ||
-            (showObserverChat && !chat.gameChat && !seatedUserNames.includes(chat.userName)) ||
-            (!seatedUserNames.includes(chat.userName) &&
-              chat.staffRole &&
-              chat.staffRole !== "" &&
-              chat.staffRole !== "trialmod" &&
-              chat.staffRole !== "altmod" &&
-              chat.staffRole !== "veteran")
-          );
-        });
-      if (!showFullChat) list = list.slice(-250);
+      const list = rows || this.filteredChats().rows;
       return list.reduce((acc, chat, i) => {
         const playerListPlayer = Object.keys(userList).length
           ? userList.list.find((player) => player.userName === chat.userName)
@@ -409,9 +424,25 @@ export class ReplayGamechat extends React.Component {
 
   render() {
     const { userInfo, gameInfo } = this.props;
-    const { showPlayerChat, showGameChat, showObserverChat, showFullChat, showWhispers, showPublicChat } = this.state;
+    const {
+      showPlayerChat,
+      showGameChat,
+      showObserverChat,
+      showFullChat,
+      showWhispers,
+      showPublicChat,
+      searchText,
+      selectedPlayer,
+      selectedPair,
+    } = this.state;
     const whisperCount = (gameInfo.chats || []).filter(isReplayWhisper).length;
-    const chats = this.processChats();
+    const options = replayChatOptions(
+      gameInfo.chats || [],
+      (gameInfo.publicPlayersState || []).map((player) => player.userName)
+    );
+    const filtered = this.filteredChats();
+    const chats = this.processChats(filtered.rows);
+    const hasSearchFilters = Boolean(searchText || selectedPlayer || selectedPair);
 
     return (
       <section className="gamechat replay-chat">
@@ -473,6 +504,69 @@ export class ReplayGamechat extends React.Component {
             </React.Fragment>
           )}
         </section>
+        <div className="replay-chat-search-controls">
+          <label htmlFor="replay-chat-search">
+            Search chat
+            <input
+              id="replay-chat-search"
+              type="search"
+              value={searchText}
+              maxLength={200}
+              placeholder="Search saved messages"
+              onChange={(event) => this.setState({ searchText: event.target.value })}
+            />
+          </label>
+          <label htmlFor="replay-chat-player">
+            Player
+            <select
+              id="replay-chat-player"
+              value={selectedPlayer}
+              title="Public messages by this player and whispers involving them"
+              onChange={(event) => this.setState({ selectedPlayer: event.target.value })}
+            >
+              <option value="">All players</option>
+              {options.players.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {showWhispers && options.pairs.length > 0 && (
+            <label htmlFor="replay-chat-pair">
+              Whisper pair
+              <select
+                id="replay-chat-pair"
+                value={selectedPair}
+                onChange={(event) => this.setState({ selectedPair: event.target.value })}
+              >
+                <option value="">All conversations</option>
+                {options.pairs.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            type="button"
+            className="ui button replay-chat-clear-filters"
+            onClick={this.clearSearchFilters}
+            disabled={!hasSearchFilters}
+          >
+            Clear filters
+          </button>
+        </div>
+        <p
+          className="replay-chat-match-count"
+          role="status"
+          title="Search checks all saved messages in the shown channels before the 250-message display limit."
+        >
+          {filtered.matchingCount > filtered.rows.length
+            ? `Showing latest ${filtered.rows.length} of ${filtered.matchingCount} matching messages. Enable entire history to show all.`
+            : `${filtered.matchingCount} matching message${filtered.matchingCount === 1 ? "" : "s"}.`}
+        </p>
         {(gameInfo.general?.neighborChat || whisperCount > 0) && (
           <p className="replay-chat-privacy">
             Neighbor chats are private during play and visible to everyone in replays.
@@ -491,7 +585,13 @@ export class ReplayGamechat extends React.Component {
             renderThumbVertical={(props) => <div {...props} className="thumb-vertical" />}
           >
             <div className="ui list" style={{ color: "var(--theme-text-1)" }}>
-              {chats?.length ? chats : <div className="replay-chat-empty">No messages available in this view.</div>}
+              {chats?.length ? (
+                chats
+              ) : (
+                <div className="replay-chat-empty">
+                  {hasSearchFilters ? "No messages match these filters." : "No messages available in this view."}
+                </div>
+              )}
             </div>
           </Scrollbars>
         </section>
