@@ -10,6 +10,7 @@ const { checkStartConditions } = require("./leave-game");
 const { remakeSchema } = require("./remake-game.schema");
 const { isNewPlayerLobby } = require("../system-lobbies/new-player");
 const { hasRemainingPlayers } = require("../game-lifecycle");
+const { minimumRemakeVotes } = require("../remake-votes");
 
 /**
  * @param {object} passport - socket authentication.
@@ -40,9 +41,7 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
   const realPlayerIndex = publicPlayersState.findIndex((player) => player.userName === passport.user);
   const player = remakeData[playerIndex];
   let chat;
-  const minimumRemakeVoteCount =
-    (game.customGameSettings.fascistCount && game.general.playerCount - game.customGameSettings.fascistCount) ||
-    Math.floor(game.general.playerCount / 2) + 2;
+  const minimumRemakeVoteCount = minimumRemakeVotes(game);
   if (game && game.general && game.general.private && !game.general.privateAnonymousRemakes) {
     chat = {
       timestamp: new Date(),
@@ -210,7 +209,6 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
       enactedPolicies: [],
     };
     newGame.private = {
-      isRemakeLobby: true,
       reports: {},
       unSeatedGameChats: [],
       commandChats: {},
@@ -254,7 +252,12 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
       // delay. Resolve occupancy now, before installing any seats in the new room.
       const remainingNames = new Set(
         game.publicPlayersState
-          .filter((player) => !player.leftGame && player.connected !== false)
+          .filter(
+            (player) =>
+              !player.leftGame &&
+              player.connected !== false &&
+              game.remakeData.some((vote) => vote.userName === player.userName && vote.isRemaking)
+          )
           .map((player) => player.userName)
       );
       const remakePlayerSocketIDs = Object.keys(io.sockets.sockets).filter((id) => {

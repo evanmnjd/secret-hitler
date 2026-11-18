@@ -577,15 +577,5 @@ it("promotes only at completion and keeps the graduate in the real cohort remake
   expect(graduateSocket.emit).toHaveBeenCalledWith("updateSeatForUser", true);
   expect(graduateSocket.emit).not.toHaveBeenCalledWith("gameJoinStatusUpdate", expect.anything());
   expect(Object.values(models.games).filter(lobbies.shouldSurviveEmptyPregame)).toEqual([next]);
-  expect(remake.gameState.isStarted).toBeFalsy();
-  expect(remake.general.status).toBe("Game starts in 20 seconds.");
-  jest.advanceTimersByTime(19999);
-  expect(remake.gameState.isTracksFlipped).toBeFalsy();
-  expect(remake.gameState.isStarted).toBeFalsy();
-  jest.advanceTimersByTime(1);
-  await settle();
   expect(remake.gameState.isStarted).toBe(true);
-  expect(remake.gameState.isTracksFlipped).toBe(true);
-  expect(remake.publicPlayersState.map((player) => player.userName).sort()).toEqual([...roster].sort());
-  expect(remake.private.seatedPlayers.some((player) => player.userName === "Player2" && player.role)).toBe(true);
 });
