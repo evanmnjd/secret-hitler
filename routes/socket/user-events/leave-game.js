@@ -10,6 +10,7 @@ const animals = require("../../../utils/animals");
 const startGame = require("../game/start-game.js");
 const { leaveGameSchema } = require("./leave-game.schema");
 const { shouldSurviveEmptyPregame } = require("../system-lobbies/new-player");
+const { minimumRemakeVotes } = require("../remake-votes");
 
 /**
  * @param {object} game - game to act on.
@@ -240,7 +241,7 @@ const handleSocketDisconnect = (socket) => {
           const playerRemakeData =
             game.remakeData && game.remakeData.find((player) => player.userName === passport.user);
           if (playerRemakeData && playerRemakeData.isRemaking) {
-            const minimumRemakeVoteCount = game.general.playerCount - game.customGameSettings.fascistCount;
+            const minimumRemakeVoteCount = minimumRemakeVotes(game);
             const remakePlayerCount = game.remakeData.filter((player) => player.isRemaking).length;
 
             if (!game.general.isRemade && game.general.isRemaking && remakePlayerCount <= minimumRemakeVoteCount) {
@@ -347,9 +348,7 @@ const handleUserLeaveGame = (socket, game, data, passport) => {
     const playerRemakeData = game.remakeData && game.remakeData.find((player) => player.userName === passport.user);
     if (playerRemakeData && playerRemakeData.isRemaking) {
       // Count leaving the game as rescinded remake vote.
-      const minimumRemakeVoteCount =
-        (game.customGameSettings.fascistCount && game.general.playerCount - game.customGameSettings.fascistCount) ||
-        Math.floor(game.general.playerCount / 2) + 2;
+      const minimumRemakeVoteCount = minimumRemakeVotes(game);
       const remakePlayerCount = game.remakeData.filter((player) => player.isRemaking).length;
 
       if (!game.general.isRemade && game.general.isRemaking && remakePlayerCount <= minimumRemakeVoteCount) {
