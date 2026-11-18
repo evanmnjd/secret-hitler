@@ -42,6 +42,46 @@
 	.replay-chat-privacy {
 		background: var(--theme-background-2);
 	}
+	.replay-chat-search-controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: 8px;
+		padding: 8px 10px;
+		background: var(--theme-background-2);
+		color: var(--theme-text-1);
+		font-size: 13px;
+		label {
+			display: flex;
+			flex-direction: column;
+			gap: 3px;
+			flex: 1 1 140px;
+			min-width: 0;
+		}
+		input,
+		select {
+			width: 100%;
+			min-width: 0;
+			max-width: 100%;
+			min-height: 32px;
+			padding: 4px;
+			border: 1px solid var(--theme-text-2);
+			border-radius: 3px;
+			background: var(--theme-background-1);
+			color: var(--theme-text-1);
+		}
+		.replay-chat-clear-filters {
+			margin: 0;
+			min-height: 32px;
+			font-size: 13px;
+		}
+	}
+	.replay-chat-match-count {
+		margin: 0;
+		padding: 0 10px 8px;
+		font-size: 12px;
+		color: var(--theme-text-1);
+	}
 	.replay-whisper-heading {
 		display: flex;
 		flex-wrap: wrap;
