@@ -14,8 +14,7 @@ const expectsSummary = (game) =>
     game?.general?.uid &&
       game.general.uid !== "devgame" &&
       !game.general.private &&
-      (game.gameState?.isStarted ||
-        game.gameState?.isTracksFlipped ||
+      (game.gameState?.isTracksFlipped ||
         game.gameState?.isCompleted ||
         typeof game?.private?.summary?.publish === "function")
   );

@@ -209,10 +209,20 @@ it("keeps legacy records versionless on read and stamps new published summaries"
 
 it("identifies an unexpectedly missing builder on a started public table", async () => {
   const h = harness();
-  h.game.gameState = { isStarted: true };
+  h.game.gameState = { isTracksFlipped: true };
   delete h.game.private.summary;
   expect(expectsSummary(h.game)).toBe(true);
   expect(await h.writer.saveReplayArchive(h.game, h.snapshot)).toBe(false);
   expect(h.records.size).toBe(1);
   expect(h.warn).toHaveBeenCalledWith(expect.stringContaining("ReplaySummaryUnavailable"));
+});
+
+it("keeps a canceled countdown without dealt roles transcript-only", async () => {
+  const h = harness();
+  h.game.gameState = { isStarted: true, cancellStart: true };
+  delete h.game.private.summary;
+  expect(expectsSummary(h.game)).toBe(false);
+  expect(await h.writer.saveReplayArchive(h.game, h.snapshot)).toBe(true);
+  expect(h.records.size).toBe(1);
+  expect(h.warn).not.toHaveBeenCalled();
 });
