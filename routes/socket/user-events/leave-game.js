@@ -1,5 +1,6 @@
 const { sendCommandChatsUpdate } = require("../util");
 const { saveAndDeleteGame } = require("../game/end-game");
+const { saveReplaySummary } = require("../game/replay-archive");
 const { sendInProgressGameUpdate } = require("../util.js");
 const { updateUserStatus, sendGameList } = require("../user-requests");
 const { games, userList } = require("../models");
@@ -10,6 +11,8 @@ const animals = require("../../../utils/animals");
 const startGame = require("../game/start-game.js");
 const { leaveGameSchema } = require("./leave-game.schema");
 const { shouldSurviveEmptyPregame } = require("../system-lobbies/new-player");
+const { hasRemainingPlayers } = require("../game-lifecycle");
+const { minimumRemakeVotes } = require("../remake-votes");
 
 /**
  * @param {object} game - game to act on.
@@ -224,11 +227,24 @@ const handleSocketDisconnect = (socket) => {
         if (
           // Waiting system intake keeps its UID; fall through to remove the seat and update status.
           !shouldSurviveEmptyPregame(game) &&
-          ((!gameState.isStarted && publicPlayersState.length === 1) ||
+          ((!gameState.isTracksFlipped && publicPlayersState.length === 1) ||
             (gameState.isCompleted &&
-              publicPlayersState.filter((player) => !player.connected || player.leftGame).length ===
-                game.general.playerCount - 1))
+              !publicPlayersState.some(
+                (player, index) => index !== playerIndex && !player.leftGame && player.connected !== false
+              )))
         ) {
+          // Cancel a pending start before teardown; its interval must not deal roles
+          // into a deleted room after the final queued player disconnects.
+          if (!gameState.isTracksFlipped) {
+            publicPlayersState.splice(playerIndex, 1);
+            checkStartConditions(game);
+          } else {
+            publicPlayersState[playerIndex].connected = false;
+            publicPlayersState[playerIndex].leftGame = true;
+            if (!hasRemainingPlayers(game) && !game.general.timeAbandoned) {
+              game.general.timeAbandoned = new Date();
+            }
+          }
           saveAndDeleteGame(gameName);
         } else if (!gameState.isTracksFlipped && playerIndex > -1) {
           publicPlayersState.splice(playerIndex, 1);
@@ -240,7 +256,7 @@ const handleSocketDisconnect = (socket) => {
           const playerRemakeData =
             game.remakeData && game.remakeData.find((player) => player.userName === passport.user);
           if (playerRemakeData && playerRemakeData.isRemaking) {
-            const minimumRemakeVoteCount = game.general.playerCount - game.customGameSettings.fascistCount;
+            const minimumRemakeVoteCount = minimumRemakeVotes(game);
             const remakePlayerCount = game.remakeData.filter((player) => player.isRemaking).length;
 
             if (!game.general.isRemade && game.general.isRemaking && remakePlayerCount <= minimumRemakeVoteCount) {
@@ -266,9 +282,7 @@ const handleSocketDisconnect = (socket) => {
             game.remakeData.find((player) => player.userName === passport.user).isRemaking = false;
           }
           sendInProgressGameUpdate(game);
-          if (
-            game.publicPlayersState.filter((publicPlayer) => publicPlayer.leftGame).length === game.general.playerCount
-          ) {
+          if (!hasRemainingPlayers(game) && !game.general.timeAbandoned) {
             game.general.timeAbandoned = new Date();
           }
         }
@@ -347,9 +361,7 @@ const handleUserLeaveGame = (socket, game, data, passport) => {
     const playerRemakeData = game.remakeData && game.remakeData.find((player) => player.userName === passport.user);
     if (playerRemakeData && playerRemakeData.isRemaking) {
       // Count leaving the game as rescinded remake vote.
-      const minimumRemakeVoteCount =
-        (game.customGameSettings.fascistCount && game.general.playerCount - game.customGameSettings.fascistCount) ||
-        Math.floor(game.general.playerCount / 2) + 2;
+      const minimumRemakeVoteCount = minimumRemakeVotes(game);
       const remakePlayerCount = game.remakeData.filter((player) => player.isRemaking).length;
 
       if (!game.general.isRemade && game.general.isRemaking && remakePlayerCount <= minimumRemakeVoteCount) {
@@ -377,7 +389,7 @@ const handleUserLeaveGame = (socket, game, data, passport) => {
     if (game.gameState.isTracksFlipped) {
       game.publicPlayersState[playerIndex].leftGame = true;
     }
-    if (game.publicPlayersState.filter((publicPlayer) => publicPlayer.leftGame).length === game.general.playerCount) {
+    if (game.gameState.isTracksFlipped && !hasRemainingPlayers(game) && !game.general.timeAbandoned) {
       game.general.timeAbandoned = new Date();
     }
     if (!game.gameState.isTracksFlipped) {
@@ -406,15 +418,7 @@ const handleUserLeaveGame = (socket, game, data, passport) => {
       (game.general.isTourny && game.general.tournyInfo.round === 0 && !game.general.tournyInfo.queuedPlayers.length))
   ) {
     io.sockets.in(game.general.uid).emit("gameUpdate", {});
-    if (!game.summarySaved && game.gameState.isTracksFlipped) {
-      const summary = game.private.summary.publish();
-      if (summary && summary.toObject() && game.general.uid !== "devgame" && !game.general.private) {
-        // An unhandled rejection here is fatal (bin/dev.js logs and exits), so a failed summary
-        // write would end every live game. Log it instead — the game is already over.
-        summary.save().catch((err) => console.log(err, "err saving summary in handleUserLeaveGame"));
-        game.summarySaved = true;
-      }
-    }
+    if (game.gameState.isTracksFlipped) void saveReplaySummary(game);
     saveAndDeleteGame(game.general.uid);
   } else if (game.gameState.isTracksFlipped) {
     sendInProgressGameUpdate(game);

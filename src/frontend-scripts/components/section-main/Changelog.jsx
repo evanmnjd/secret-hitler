@@ -68,11 +68,10 @@ class Changelog extends React.Component {
           private conversations with four different players over the course of a game.
         </p>
         <p>
-          <strong>Important note:</strong> messages stay private to you and your neighbor, including after the game.
-          They are saved and authorized moderators can review them. You can mute Neighbor Chat without hiding public
-          chat, and report a received message using its Report button — please be kind while using this. Your own
-          conversations are available in the replay; other players&apos; conversations are not. Other private
-          communication remains against site rules.
+          <strong>Important note:</strong> messages stay private to you and your neighbor during play, with access for
+          authorized moderators. All neighbor chats are saved and visible to everyone in replays after the game ends.
+          You can mute Neighbor Chat without hiding public chat, and report a received message using its Report button —
+          please be kind while using this. Other private communication remains against site rules.
         </p>
         <p>
           If there&apos;s tweaks or issues here, I&apos;ll address them as they come up. Hopefully this is better than

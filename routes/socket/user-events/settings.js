@@ -164,7 +164,20 @@ module.exports.handleUpdatedGameSettings = (socket, passport, data) => {
         });
       } else {
         account.gameSettings.isPrivate = currentPrivate;
-        account.save(() => {
+        account.save((err) => {
+          if (err) {
+            console.log(err, "err saving game settings");
+            return;
+          }
+          // Presence broadcasts read these flags from userList, not from Mongo.
+          // Apply saved staff display preferences immediately, including after an
+          // incognito rebuild, without changing staff role or visibility rights.
+          const liveUser = userList.find((entry) => entry.userName === passport.user);
+          if (liveUser && (aem || veteran)) {
+            for (const field of ["staffDisableStaffColor", "staffDisableVisibleElo", "staffDisableVisibleXP"]) {
+              if (Object.prototype.hasOwnProperty.call(data, field)) liveUser[field] = account.gameSettings[field];
+            }
+          }
           socket.emit("gameSettings", account.gameSettings);
           sendUserList();
         });

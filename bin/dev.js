@@ -2,7 +2,8 @@
 
 const http = require("http");
 const express = require("express");
-require("dotenv").config();
+const localTesting = process.env.NODE_ENV === "development" && process.env.SHIO_LOCAL_TESTING === "1";
+if (!localTesting) require("dotenv").config();
 const diagnostics = require("./diagnostics");
 
 // Crash-with-context. Every socket/game handler is now zod-typed, so a surviving unhandled
@@ -69,7 +70,7 @@ global.notify = require("node-notifier");
 
 app.set("port", port);
 app.set("strict routing", true);
-server.listen(port);
+server.listen(port, localTesting ? "127.0.0.1" : undefined);
 
 function onError(error) {
   if (error.syscall !== "listen") {

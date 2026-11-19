@@ -26,7 +26,7 @@ const archive = () => ({
   ],
 });
 const render = (username = "Bob", canReview = false, savedGame = archive()) => {
-  const data = replayForViewer(savedGame, username, canReview);
+  const data = replayForViewer(savedGame, username, canReview, { includeAllNeighborChats: true });
   return shallow(
     <ReplayGamechat
       userInfo={{ userName: username, gameSettings: {} }}
@@ -43,23 +43,25 @@ const toggle = (wrapper, filter) =>
 
 describe("private conversations in replay chat", () => {
   it.each([
-    [null, false, 0],
-    ["Stranger", false, 0],
-    ["Alice", false, 2],
-    ["Bob", false, 2],
+    [null, false, 3],
+    ["Stranger", false, 3],
+    ["Alice", false, 3],
+    ["Bob", false, 3],
     ["Reviewer", true, 3],
-  ])("defaults to public chat and counts authorized whispers for %s (reviewer: %s)", (username, canReview, count) => {
+  ])("defaults to public chat and lets %s view all replay whispers (reviewer: %s)", (username, canReview, count) => {
     const wrapper = render(username, canReview);
     expect(wrapper.find(".replay-whisper")).toHaveLength(0);
     expect(wrapper.find(".replay-whisper-filter").text()).toContain(`Show whispers (${count})`);
     expect(wrapper.find(".replay-whisper-filter").prop("aria-pressed")).toBe(false);
+    expect(wrapper.find(".replay-public-filter").text()).toContain("Hide public chat");
+    expect(wrapper.find(".replay-public-filter").prop("aria-pressed")).toBe(true);
     expect(chatText(wrapper)).toContain("Public message");
     expect(chatText(wrapper)).not.toContain("First private message");
     toggle(wrapper, "Whispers");
     expect(wrapper.find(".replay-whisper")).toHaveLength(count);
-    expect(chatText(wrapper).includes("Unrelated secret")).toBe(canReview);
-    expect(chatText(wrapper).includes("First private message")).toBe(count > 0);
-    if (!username) expect(wrapper.find(".replay-chat-privacy").text()).toContain("Log in");
+    expect(chatText(wrapper)).toContain("Unrelated secret");
+    expect(chatText(wrapper)).toContain("First private message");
+    expect(wrapper.find(".replay-chat-privacy").text()).toContain("visible to everyone in replays");
   });
 
   it("shows directions, renders emotes and keeps recipient reporting available", () => {
@@ -68,9 +70,10 @@ describe("private conversations in replay chat", () => {
     expect(wrapper.find(".replay-whisper-label").at(0).text()).toBe("Whisper · #1 Alice → #2 Bob");
     expect(wrapper.find(".chat-role--neighbor-chat").at(1).find("img").prop("src")).toBe("/emotes/ja.png");
     const reports = wrapper.find(NeighborChatReport);
-    expect(reports).toHaveLength(2);
+    expect(reports).toHaveLength(3);
     expect(reports.at(0).dive().find("button")).toHaveLength(1);
     expect(reports.at(1).dive().isEmptyRender()).toBe(true);
+    expect(reports.at(2).dive().isEmptyRender()).toBe(true);
   });
 
   it.each([
@@ -82,22 +85,26 @@ describe("private conversations in replay chat", () => {
     const wrapper = render();
     if (showWhispers) toggle(wrapper, "Whispers");
     if (!showPublicChat) toggle(wrapper, "Public");
-    expect(wrapper.find(".replay-whisper")).toHaveLength(showWhispers ? 2 : 0);
+    expect(wrapper.find(".replay-whisper")).toHaveLength(showWhispers ? 3 : 0);
     expect(chatText(wrapper).includes("Public message")).toBe(showPublicChat);
     expect(wrapper.find(".replay-whisper-filter").prop("aria-pressed")).toBe(showWhispers);
     expect(wrapper.find(".replay-public-filter").prop("aria-pressed")).toBe(showPublicChat);
     expect(wrapper.find(".replay-chat-empty")).toHaveLength(!showWhispers && !showPublicChat ? 1 : 0);
   });
 
-  it("preserves public filters and chat history when switching channels", () => {
+  it("preserves public filters and chat history when toggling channels back and forth", () => {
     const wrapper = render();
     const original = JSON.stringify(wrapper.instance().props.gameInfo);
     toggle(wrapper, "Player");
     toggle(wrapper, "Whispers");
-    expect(wrapper.find(".replay-whisper")).toHaveLength(2);
-    toggle(wrapper, "Public");
-    toggle(wrapper, "Public");
     expect(chatText(wrapper)).not.toContain("Public message");
+    expect(wrapper.find(".replay-whisper")).toHaveLength(3);
+    toggle(wrapper, "Public");
+    toggle(wrapper, "Public");
+    expect(wrapper.state("showPlayerChat")).toBe(false);
+    expect(chatText(wrapper)).not.toContain("Public message");
+    toggle(wrapper, "Whispers");
+    expect(wrapper.find(".replay-whisper")).toHaveLength(0);
     toggle(wrapper, "Player");
     expect(chatText(wrapper)).toContain("Public message");
     const history = wrapper.instance().props.gameInfo.chats;
@@ -107,32 +114,44 @@ describe("private conversations in replay chat", () => {
     expect(JSON.stringify(wrapper.instance().props.gameInfo)).toBe(original);
   });
 
-  it("shows an empty state for an unrelated viewer's whispers-only view", () => {
-    const wrapper = render("Stranger");
+  it("provides an honest empty state when the archive has no neighbor chats", () => {
+    const wrapper = render("Stranger", false, { ...archive(), neighborChats: [] });
     toggle(wrapper, "Whispers");
     toggle(wrapper, "Public");
     expect(wrapper.find(".replay-chat-empty").text()).toBe("No messages available in this view.");
     expect(chatText(wrapper)).not.toContain("Public message");
   });
 
-  it("hides staff messages and broadcasts with the public chat toggle", () => {
+  it("hides broadcasts and staff messages along with all other public chat", () => {
     const savedGame = archive();
     savedGame.chats.push(
       { userName: "Admin", timestamp: 4, isBroadcast: true, chat: "Public broadcast" },
       { userName: "Moderator", timestamp: 5, staffRole: "moderator", chat: "Public staff message" }
     );
-    const wrapper = render("Bob", false, savedGame);
+    const wrapper = render("Stranger", false, savedGame);
     expect(wrapper.find(".broadcast-chat")).toHaveLength(1);
     expect(chatText(wrapper)).toContain("Public staff message");
     toggle(wrapper, "Whispers");
     toggle(wrapper, "Public");
     expect(wrapper.find(".broadcast-chat")).toHaveLength(0);
     expect(chatText(wrapper)).not.toContain("Public staff message");
-    expect(wrapper.find(".replay-whisper")).toHaveLength(2);
+    expect(wrapper.find(".replay-whisper")).toHaveLength(3);
   });
 
-  it("keeps the standard chat controls for games without whispers", () => {
-    const wrapper = render("Bob", false, { ...archive(), neighborChat: false, neighborChats: [] });
+  it("applies the whisper toggle to older messages without participant metadata", () => {
+    const legacy = whisper("legacy", "Alice", "Bob", "Legacy private message", 1);
+    delete legacy.neighborChat;
+    const wrapper = render(null, false, { ...archive(), neighborChats: [legacy] });
+    expect(chatText(wrapper)).not.toContain("Legacy private message");
+    toggle(wrapper, "Whispers");
+    expect(wrapper.find(".replay-whisper")).toHaveLength(1);
+    expect(chatText(wrapper)).toContain("Legacy private message");
+    toggle(wrapper, "Whispers");
+    expect(chatText(wrapper)).not.toContain("Legacy private message");
+  });
+
+  it("keeps normal replays' existing public chat controls without extra channel buttons", () => {
+    const wrapper = render("Stranger", false, { ...archive(), neighborChat: false, neighborChats: [] });
     expect(wrapper.find(".replay-whisper-filter")).toHaveLength(0);
     expect(wrapper.find(".replay-public-filter")).toHaveLength(0);
     expect(chatText(wrapper)).toContain("Public message");
@@ -144,49 +163,117 @@ describe("replay chat switching", () => {
     const game = buildEnhancedGameSummary({ ...fixture, _id: id });
     return { status: "READY", game, ticks: buildReplay(game), position: 0 };
   };
-
-  it("opens the chat panel even when no archived messages are available", () => {
-    const wrapper = shallow(<ReplayWrapper replay={ready()} userInfo={{}} userList={{ list: [] }} to={jest.fn()} />, {
+  let emit;
+  let replies;
+  const renderReplay = (id = "first") => {
+    const wrapper = shallow(<ReplayWrapper replay={ready(id)} userInfo={{}} userList={{ list: [] }} to={jest.fn()} />, {
       disableLifecycleMethods: true,
     });
-    wrapper.find(".displaychats").simulate("click");
-    expect(wrapper.find("Replay").dive().find(ConnectedReplayGamechat)).toHaveLength(1);
-    expect(wrapper.find("Replay").dive().find("ReplayControls")).toHaveLength(0);
-  });
-
-  it("advertises only the whispers supplied to the viewer", () => {
-    const wrapper = shallow(<ReplayWrapper replay={{ status: "LOADING" }} />, { disableLifecycleMethods: true });
-    wrapper.setState({ gameData: replayForViewer(archive(), "Bob", false) });
-    expect(wrapper.find(".displaychats").text()).toBe("Show chats · 2 whispers");
-  });
-
-  it("rejects delayed transcript replies for a different replay and clears old chat when switching", () => {
-    let receive;
-    const on = jest.spyOn(socket, "on").mockImplementation((event, handler) => {
-      if (event === "replayGameData") receive = handler;
+    wrapper.instance().componentDidMount();
+    return wrapper;
+  };
+  const receive = (event, uid, data) =>
+    replies
+      .find((request) => request.event === event && request.uid === uid)
+      .callback({
+        success: true,
+        uid,
+        data: { uid, ...data },
+      });
+  beforeEach(() => {
+    jest.useFakeTimers();
+    replies = [];
+    emit = jest.spyOn(socket, "emit").mockImplementation((event, uid, callback) => {
+      replies.push({ event, uid, callback });
     });
-    const emit = jest.spyOn(socket, "emit").mockImplementation(() => {});
-    const off = jest.spyOn(socket, "off").mockImplementation(() => {});
-    try {
-      const wrapper = shallow(<ReplayWrapper replay={ready("first")} />, { disableLifecycleMethods: true });
-      wrapper.instance().componentDidMount();
-      receive({ uid: "first", chats: [{ chat: "First replay" }] });
-      receive({ uid: "other", chats: [{ chat: "Wrong replay" }] });
-      expect(wrapper.state("gameData").chats).toEqual([{ chat: "First replay" }]);
-      const previous = wrapper.instance().props;
-      wrapper.setProps({ replay: ready("second") });
-      wrapper.instance().componentDidUpdate(previous);
-      expect(wrapper.state("gameData")).toEqual({});
-      expect(emit).toHaveBeenCalledWith("getReplayGameData", "second");
-      receive({ uid: "first", chats: [{ chat: "Delayed first replay" }] });
-      expect(wrapper.state("gameData")).toEqual({});
-      receive({ uid: "second", chats: [{ chat: "Second replay" }] });
-      expect(wrapper.state("gameData").chats).toEqual([{ chat: "Second replay" }]);
-      wrapper.unmount();
-    } finally {
-      on.mockRestore();
-      emit.mockRestore();
-      off.mockRestore();
-    }
+  });
+  afterEach(() => {
+    emit.mockRestore();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it("loads table metadata up front, and loads chat only on first opening", () => {
+    const wrapper = renderReplay();
+    expect(emit.mock.calls.map((call) => call[0])).toEqual(["getReplayMetadata"]);
+    receive("getReplayMetadata", "first", { name: "Neighbor table", neighborChat: true });
+    expect(wrapper.find("Replay").prop("gameData")).toMatchObject({ name: "Neighbor table", neighborChat: true });
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
+    expect(wrapper.state("chatStatus")).toBe("LOADING");
+    expect(wrapper.find("Replay").dive().find(".replay-chat-status").text()).toContain("Loading replay chat");
+    receive("getReplayGameData", "first", { chats: [] });
+    expect(wrapper.find("Replay").dive().find(ConnectedReplayGamechat)).toHaveLength(1);
+    expect(wrapper.find("Replay").dive().find("ReplayControls").prop("compact")).toBe(true);
+    expect(wrapper.find("Replay").dive().find("ReplayTimeline")).toHaveLength(1);
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
+    expect(emit.mock.calls.filter((call) => call[0] === "getReplayGameData")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("advertises the loaded whisper count", () => {
+    const wrapper = renderReplay("table");
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
+    receive("getReplayGameData", "table", replayForViewer(archive(), "Bob", false, { includeAllNeighborChats: true }));
+    expect(wrapper.find("Replay").dive().find(".displaychats").text()).toBe("Hide chats · 3 whispers");
+    wrapper.unmount();
+  });
+
+  it("rejects delayed acknowledgements and legacy broadcasts when switching replays", () => {
+    const on = jest.spyOn(socket, "on");
+    const wrapper = renderReplay();
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
+    wrapper.setProps({ replay: ready("second") });
+    wrapper.instance().componentDidUpdate();
+    receive("getReplayGameData", "first", { chats: [{ chat: "Delayed first replay" }] });
+    receive("getReplayMetadata", "first", { name: "Wrong table" });
+    expect(wrapper.state("gameData")).toEqual({});
+    expect(wrapper.state("metadata")).toEqual({});
+    expect(wrapper.state("chatsShown")).toBe(false);
+    expect(wrapper.state("chatStatus")).toBe("INITIAL");
+    expect(emit.mock.calls.filter((call) => call[0] === "getReplayGameData")).toHaveLength(1);
+    expect(on).not.toHaveBeenCalledWith("replayGameData", expect.any(Function));
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
+    receive("getReplayGameData", "second", { chats: [{ chat: "Second replay" }] });
+    expect(wrapper.state("gameData").chats).toEqual([{ chat: "Second replay" }]);
+    wrapper.unmount();
+    on.mockRestore();
+  });
+
+  it("distinguishes a missing transcript from empty chat and retries timed-out requests", () => {
+    const wrapper = renderReplay();
+    wrapper.find("Replay").dive().find(".displaychats").simulate("click");
+    const first = replies.find((request) => request.event === "getReplayGameData");
+    first.callback({ success: false, uid: "first", code: "unavailable" });
+    expect(wrapper.state("chatStatus")).toBe("UNAVAILABLE");
+    expect(wrapper.find("Replay").dive().find(".replay-chat-status").text()).toContain("no chat archive was saved");
+    wrapper.find("Replay").dive().find(".replay-chat-retry").simulate("click");
+    jest.advanceTimersByTime(10000);
+    expect(wrapper.state("chatStatus")).toBe("ERROR");
+    expect(wrapper.find("Replay").dive().find(".replay-chat-status").text()).toContain("could not be loaded");
+    const timedOut = replies.filter((request) => request.event === "getReplayGameData")[1];
+    timedOut.callback({ success: true, uid: "first", data: { uid: "first", chats: [{ chat: "Too late" }] } });
+    expect(wrapper.state("chatStatus")).toBe("ERROR");
+    wrapper.find("Replay").dive().find(".replay-chat-retry").simulate("click");
+    replies
+      .filter((request) => request.event === "getReplayGameData")[2]
+      .callback({ success: true, uid: "first", data: { uid: "first", chats: [] } });
+    expect(wrapper.state("chatStatus")).toBe("READY");
+    wrapper.unmount();
+  });
+
+  it("shows a board error and retries the same requested moment", () => {
+    const retry = jest.fn();
+    const moment = { turn: 2, phase: "election" };
+    const wrapper = shallow(
+      <ReplayWrapper
+        replay={{ status: "ERROR", gameId: "first", moment, error: { message: "Server unavailable" } }}
+        retry={retry}
+      />,
+      { disableLifecycleMethods: true }
+    );
+    expect(wrapper.find(".replay-load-error").text()).toContain("Server unavailable");
+    wrapper.find(".replay-retry").simulate("click");
+    expect(retry).toHaveBeenCalledWith("first", moment);
   });
 });

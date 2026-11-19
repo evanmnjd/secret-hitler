@@ -263,7 +263,17 @@ const Playback = ({ hasNext, hasPrev, next, prev, forward, backward, beginning, 
   );
 };
 
-const ReplayControls = ({ turnsSize, turnNum, phase, description, playback, deck, deckShown, userInfo }) => {
+const ReplayControls = ({
+  turnsSize,
+  turnNum,
+  phase,
+  description,
+  playback,
+  deck,
+  deckShown,
+  userInfo,
+  compact = false,
+}) => {
   const {
     hasNext,
     hasPrev,
@@ -282,28 +292,36 @@ const ReplayControls = ({ turnsSize, turnNum, phase, description, playback, deck
   } = playback;
 
   return (
-    <section className="replay-controls">
-      <TurnNav position={turnNum} size={turnsSize} toTurn={toTurn} />
-      <div className="phase-shortcuts">
-        <button className="ui button" onClick={toElection}>
-          Election
-        </button>
-        <button className="ui button" onClick={toLegislation} disabled={!hasLegislation}>
-          Policies
-        </button>
-        <button className="ui button" onClick={toAction} disabled={!hasAction}>
-          Power
-        </button>
-      </div>
-      <PhaseNav
-        phase={phase}
-        hasLegislation={hasLegislation}
-        hasAction={hasAction}
-        toElection={toElection}
-        toLegislation={toLegislation}
-        toAction={toAction}
-      />
-      <Description description={description} deck={deck} deckShown={deckShown} userInfo={userInfo} />
+    <section className={`replay-controls${compact ? " compact" : ""}`}>
+      {compact ? (
+        <p className="replay-current-moment">
+          Government {turnNum + 1} · {capitalize(phase.replace(/([A-Z])/g, " $1"))}
+        </p>
+      ) : (
+        <React.Fragment>
+          <TurnNav position={turnNum} size={turnsSize} toTurn={toTurn} />
+          <div className="phase-shortcuts">
+            <button className="ui button" onClick={toElection}>
+              Election
+            </button>
+            <button className="ui button" onClick={toLegislation} disabled={!hasLegislation}>
+              Policies
+            </button>
+            <button className="ui button" onClick={toAction} disabled={!hasAction}>
+              Power
+            </button>
+          </div>
+          <PhaseNav
+            phase={phase}
+            hasLegislation={hasLegislation}
+            hasAction={hasAction}
+            toElection={toElection}
+            toLegislation={toLegislation}
+            toAction={toAction}
+          />
+          <Description description={description} deck={deck} deckShown={deckShown} userInfo={userInfo} />
+        </React.Fragment>
+      )}
       <Playback
         hasNext={hasNext}
         hasPrev={hasPrev}

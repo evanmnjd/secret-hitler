@@ -62,3 +62,17 @@ it.each([undefined, 0, -100])("uses 1600 for an absent score and preserves finit
     `${eloSeason === undefined ? 1600 : eloSeason} P`
   );
 });
+
+it.each([false, true])("lets an admin show or hide their score in list layout legacy=%s", (disableAggregations) => {
+  const admin = { staffRole: "admin", isRainbowSeason: true, winsSeason: 10, lossesSeason: 10 };
+  const wrapper = render(admin, { disableAggregations });
+  expect(wrapper.find(".user-container .userlist-stats").text()).toBe("1600");
+  wrapper.setProps({
+    userList: { list: [{ userName: "Ada", eloSeason: 1600, ...admin, staffDisableVisibleElo: true }] },
+  });
+  expect(wrapper.find(".user-container .userlist-stats")).toHaveLength(0);
+  wrapper.setProps({
+    userList: { list: [{ userName: "Ada", eloSeason: 1600, ...admin, staffDisableVisibleElo: false }] },
+  });
+  expect(wrapper.find(".user-container .userlist-stats").text()).toBe("1600");
+});

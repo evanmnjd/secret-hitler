@@ -61,4 +61,6 @@ it("shows the last successful refresh and flags old standings", async () => {
   await wrapper.instance().loadLeaderboard();
   expect(wrapper.find("time").prop("dateTime")).toBe("2020-01-01T09:00:00.000Z");
   expect(wrapper.text()).toContain("waiting for a fresh update");
+  expect(wrapper.text()).toContain("Seasonal and Rainbow standings refresh hourly");
+  expect(wrapper.text()).toContain("Daily gains refresh at 09:00 UTC");
 });

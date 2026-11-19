@@ -37,7 +37,8 @@ beforeAll(() => {
 });
 
 const settle = async () => {
-  for (let step = 0; step < 8; step++) await Promise.resolve();
+  // Remake teardown waits for the serialized summary and transcript writes before removing its old room.
+  for (let step = 0; step < 24; step++) await Promise.resolve();
 };
 
 beforeEach(() => {

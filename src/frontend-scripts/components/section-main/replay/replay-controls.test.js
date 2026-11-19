@@ -2,7 +2,12 @@ import React from "react";
 import { shallow, mount } from "enzyme";
 import { List } from "immutable";
 import ReplayControls from "./ReplayControls";
+import ReplayGamechat from "./ReplayGamechat";
 import { ReplayWrapper } from "./Replay";
+import Players from "../Players";
+import buildEnhancedGameSummary from "../../../../../models/game-summary/buildEnhancedGameSummary";
+import buildReplay from "../../../replay/buildReplay";
+import mockGameSummary from "../../../../../__test__/mocks/mockGameSummary";
 
 const renderControls = (overrides = {}) => {
   const playback = {
@@ -111,12 +116,75 @@ it.each([
   row.remove();
 });
 
-it("keeps replay display toggles in a wrapping toolbar and preserves their state changes", () => {
+it("keeps display toggles available during loading and waits for the board before opening chat", () => {
   const wrapper = shallow(<ReplayWrapper replay={{ status: "LOADING" }} />, { disableLifecycleMethods: true });
   wrapper.setState({ legacyReplay: false });
   expect(wrapper.find(".replay-actions button")).toHaveLength(4);
+  expect(wrapper.find(".displaychats").prop("disabled")).toBe(true);
   wrapper.find(".displaychats").simulate("click");
   wrapper.find(".displayroles").simulate("click");
   wrapper.find(".displaydeck").simulate("click");
-  expect(wrapper.state()).toMatchObject({ chatsShown: true, hiddenInfoShown: false, deckShown: true });
+  expect(wrapper.state()).toMatchObject({ chatsShown: false, hiddenInfoShown: false, deckShown: true });
+});
+
+it("keeps display actions beside the loaded board and usable while viewing saved chat", () => {
+  const game = buildEnhancedGameSummary(mockGameSummary);
+  const exit = jest.fn();
+  const wrapper = shallow(
+    <ReplayWrapper
+      replay={{ status: "READY", game, ticks: buildReplay(game), position: 0 }}
+      userInfo={{}}
+      userList={{ list: [] }}
+      to={jest.fn()}
+      exit={exit}
+    />,
+    { disableLifecycleMethods: true }
+  );
+  wrapper.setState({
+    legacyReplay: false,
+    chatStatus: "READY",
+    gameData: { uid: game.id, chats: [{ chat: "Saved chat" }] },
+  });
+  const view = () => wrapper.find("Replay").dive();
+
+  // Actions must share the controls pane rather than add a full-width row above the board.
+  expect(wrapper.children(".replay-actions")).toHaveLength(0);
+  expect(view().find(".right-side > .replay-actions button")).toHaveLength(4);
+  expect(view().find(".left-side .replay-actions")).toHaveLength(0);
+
+  view().find(".displayroles").simulate("click");
+  expect(view().find("ReplayOverlay").prop("hideHand")).toBe(true);
+  expect(view().find(Players).prop("hideRoles")).toBe(true);
+  view().find(".displaydeck").simulate("click");
+  expect(view().find("ReplayControls").prop("deckShown")).toBe(true);
+  expect(view().find(Players).prop("deckShown")).toBe(true);
+
+  view().find(".displaychats").simulate("click");
+  expect(view().find(ReplayGamechat).prop("gameInfo").chats).toEqual([{ chat: "Saved chat" }]);
+  expect(view().find("ReplayControls").prop("compact")).toBe(true);
+  expect(view().find("ReplayTimeline")).toHaveLength(1);
+  const compact = view().find("ReplayControls").dive();
+  expect(compact.find("Playback").dive().find("button")).toHaveLength(6);
+  expect(compact.find("TurnNav")).toHaveLength(0);
+  expect(compact.find("PhaseNav")).toHaveLength(0);
+  expect(view().find(".right-side > .replay-actions button")).toHaveLength(4);
+  expect(view().find("ReplayMomentLink")).toHaveLength(1);
+  view().find(".displaychats").simulate("click");
+  expect(view().find("ReplayControls")).toHaveLength(1);
+  expect(view().find("ReplayControls").prop("compact")).toBe(false);
+  view().find(".exit").simulate("click");
+  expect(window.location.hash).toBe("#/");
+  expect(exit).toHaveBeenCalledTimes(1);
+  wrapper.unmount();
+  window.history.replaceState(null, "", "/");
+});
+
+it.each(["LOADING", "NOT_FOUND"])("keeps Exit available while the replay is %s", (status) => {
+  const exit = jest.fn();
+  const wrapper = shallow(<ReplayWrapper replay={{ status }} exit={exit} />, { disableLifecycleMethods: true });
+  wrapper.find(".exit").simulate("click");
+  expect(exit).toHaveBeenCalledTimes(1);
+  expect(window.location.hash).toBe("#/");
+  wrapper.unmount();
+  window.history.replaceState(null, "", "/");
 });

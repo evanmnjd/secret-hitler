@@ -42,6 +42,46 @@
 	.replay-chat-privacy {
 		background: var(--theme-background-2);
 	}
+	.replay-chat-search-controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: 8px;
+		padding: 8px 10px;
+		background: var(--theme-background-2);
+		color: var(--theme-text-1);
+		font-size: 13px;
+		label {
+			display: flex;
+			flex-direction: column;
+			gap: 3px;
+			flex: 1 1 140px;
+			min-width: 0;
+		}
+		input,
+		select {
+			width: 100%;
+			min-width: 0;
+			max-width: 100%;
+			min-height: 32px;
+			padding: 4px;
+			border: 1px solid var(--theme-text-2);
+			border-radius: 3px;
+			background: var(--theme-background-1);
+			color: var(--theme-text-1);
+		}
+		.replay-chat-clear-filters {
+			margin: 0;
+			min-height: 32px;
+			font-size: 13px;
+		}
+	}
+	.replay-chat-match-count {
+		margin: 0;
+		padding: 0 10px 8px;
+		font-size: 12px;
+		color: var(--theme-text-1);
+	}
 	.replay-whisper-heading {
 		display: flex;
 		flex-wrap: wrap;
@@ -180,6 +220,81 @@
 		.button {
 			margin: 0;
 			min-height: 40px;
+		}
+	}
+	.replay-share-status {
+		align-self: center;
+		font-size: 13px;
+		color: var(--theme-text-1);
+	}
+	.replay-share-fallback {
+		flex-basis: 100%;
+		min-width: 0;
+		padding: 8px;
+		color: var(--theme-text-1);
+		background: var(--theme-background-1);
+		border: 1px solid var(--theme-text-2);
+	}
+	.replay-timeline {
+		min-width: 0;
+		padding: 8px;
+		background: var(--theme-background-1);
+		ol {
+			display: flex;
+			align-items: center;
+			gap: 5px;
+			list-style: none;
+			margin: 0;
+			padding: 2px 0 6px;
+			overflow-x: auto;
+		}
+		li {
+			display: flex;
+			align-items: center;
+			gap: 5px;
+			flex: 0 0 auto;
+		}
+		.replay-timeline-connector {
+			color: var(--theme-text-2);
+		}
+		button {
+			padding: 8px;
+			min-height: 40px;
+			border: 1px solid var(--theme-text-2);
+			border-radius: 4px;
+			background: var(--theme-background-2);
+			color: var(--theme-text-1);
+			cursor: pointer;
+			white-space: nowrap;
+			&.power {
+				border-style: dashed;
+			}
+			&.current {
+				border: 2px solid $lteal;
+				padding: 7px;
+				background: rgba($lteal, 0.18);
+				font-weight: bold;
+			}
+			&:focus-visible {
+				outline: 2px solid $lteal;
+				outline-offset: 2px;
+			}
+		}
+	}
+	.right-side > .replay-controls.compact {
+		padding: 8px 12px;
+		.replay-current-moment {
+			margin: 0 0 6px;
+			font-size: 16px;
+		}
+		.playback {
+			margin: 0;
+			h1 {
+				display: none;
+			}
+			.ui.horizontal.segments {
+				margin: 0;
+			}
 		}
 	}
 

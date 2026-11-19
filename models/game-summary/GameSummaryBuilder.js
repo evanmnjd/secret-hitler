@@ -22,6 +22,7 @@ module.exports = class GameSummaryBuilder {
     const { _id, date, gameSetting, customGameSettings, players, libElo, fasElo, logs } = this;
     return new GameSummary({
       _id,
+      archiveVersion: 1,
       date,
       gameSetting,
       customGameSettings,

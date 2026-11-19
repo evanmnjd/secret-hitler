@@ -19,7 +19,7 @@ const PlayerReport = require("../../../../models/playerReport");
 const { games } = require("../../../../routes/socket/models");
 const { sendInProgressGameUpdate } = require("../../../../routes/socket/util");
 const { replayForViewer } = require("../../../../routes/socket/neighbor-chat");
-const { sendReplayGameData, sendUserReports } = require("../../../../routes/socket/user-requests");
+const { sendReplayGameData, sendReplayMetadata, sendUserReports } = require("../../../../routes/socket/user-requests");
 const {
   handleMuteNeighborChat,
   handleReportNeighborChat,
@@ -27,6 +27,7 @@ const {
 
 const query = (value) => ({
   select: jest.fn().mockReturnThis(),
+  maxTimeMS: jest.fn().mockReturnThis(),
   sort: jest.fn().mockReturnThis(),
   limit: jest.fn().mockReturnThis(),
   lean: jest.fn().mockResolvedValue(value),
@@ -57,8 +58,8 @@ beforeEach(() => {
   PlayerReport.save.mockResolvedValue({});
 });
 
-describe("restricted replay transcripts", () => {
-  it.each([undefined, "Stranger", "Carol"])("does not expose another pair's messages to %s", (username) => {
+describe("replay transcripts and export privacy", () => {
+  it.each([undefined, "Stranger", "Carol"])("keeps other pairs out of the default export for %s", (username) => {
     const result = replayForViewer(archive, username, false);
     expect(result).not.toHaveProperty("neighborChats");
     expect(result).not.toHaveProperty("hiddenInfoChat");
@@ -67,18 +68,35 @@ describe("restricted replay transcripts", () => {
     expect(result.chats).toEqual(username === "Carol" ? [archive.chats[0], unrelated] : [archive.chats[0]]);
   });
 
-  it("returns both directions to a participant exactly once, without modifying the stored record", () => {
+  it("keeps the participant export deduplicated without modifying the stored record", () => {
     archive.chats.push(incoming); // Also cover records written by the earlier public-replay implementation.
     const before = JSON.stringify(archive);
     expect(replayForViewer(archive, "Bob", false).chats).toEqual([archive.chats[0], incoming, outgoing]);
     expect(JSON.stringify(archive)).toBe(before);
   });
 
-  it("withholds legacy neighbor rows without trustworthy identities from ordinary viewers", () => {
+  it("withholds unidentified legacy rows from the default export", () => {
     const legacy = { gameChat: true, chat: [{ text: "Alice to Bob" }, { type: "neighbor-chat", text: "legacy" }] };
     archive.chats.push(legacy);
     expect(replayForViewer(archive, "Bob", false).chats).not.toContain(legacy);
     expect(replayForViewer(archive, "Reviewer", true).chats).toContain(legacy);
+  });
+
+  it.each([
+    undefined,
+    "Stranger",
+    "Bob",
+  ])("includes all archived pairs exactly once in a public replay for %s", (username) => {
+    archive.chats.push(incoming);
+    const legacy = { gameChat: true, chat: [{ type: "neighbor-chat", text: "legacy whisper" }] };
+    archive.hiddenInfoChat.push(legacy);
+    const before = JSON.stringify(archive);
+    const result = replayForViewer(archive, username, false, { includeAllNeighborChats: true });
+    expect(result.chats).toEqual([archive.chats[0], incoming, outgoing, unrelated, legacy]);
+    expect(result).not.toHaveProperty("neighborChats");
+    expect(result).not.toHaveProperty("hiddenInfoChat");
+    expect(result.chats).not.toContain(archive.hiddenInfoChat[0]);
+    expect(JSON.stringify(archive)).toBe(before);
   });
 
   it.each([
@@ -109,32 +127,61 @@ describe("restricted replay transcripts", () => {
     const socket = makeSocket("Stranger");
     socket.handshake.session.passport.staffRole = "admin";
     await sendReplayGameData(socket, "table");
-    expect(socket.emit).toHaveBeenCalledWith("replayGameData", { uid: "table", chats: [archive.chats[0]] });
+    expect(socket.emit).toHaveBeenCalledWith("replayGameData", {
+      uid: "table",
+      chats: [archive.chats[0], incoming, outgoing, unrelated],
+    });
   });
 
-  it("serves anonymous viewers only public chats and deleted accounts no participant access", async () => {
+  it("serves all archived conversations to anonymous viewers and deleted accounts", async () => {
     const anonymous = makeSocket();
     await sendReplayGameData(anonymous, "table");
     expect(Account.findOne).not.toHaveBeenCalled();
-    expect(anonymous.emit.mock.calls[0][1].chats).toEqual([archive.chats[0]]);
+    expect(anonymous.emit.mock.calls[0][1].chats).toEqual([archive.chats[0], incoming, outgoing, unrelated]);
+    expect(anonymous.emit.mock.calls[0][1]).not.toHaveProperty("hiddenInfoChat");
     Account.findOne.mockReturnValue(query(null));
     const deleted = makeSocket("Bob");
     await sendReplayGameData(deleted, "table");
-    expect(deleted.emit.mock.calls[0][1].chats).toEqual([archive.chats[0]]);
+    expect(deleted.emit.mock.calls[0][1].chats).toEqual([archive.chats[0], incoming, outgoing, unrelated]);
+    expect(deleted.emit.mock.calls[0][1]).not.toHaveProperty("hiddenInfoChat");
   });
 
-  it("uses authenticated account identity for participant history", async () => {
+  it("lets a participant see the other archived pairs as well", async () => {
     const socket = makeSocket("Bob");
     await sendReplayGameData(socket, "table");
-    expect(socket.emit.mock.calls[0][1].chats).toEqual([archive.chats[0], incoming, outgoing]);
+    expect(socket.emit.mock.calls[0][1].chats).toEqual([archive.chats[0], incoming, outgoing, unrelated]);
   });
 
-  it("does not expose a saved snapshot while the table is still running", async () => {
+  it.each([
+    [undefined, true],
+    ["Stranger", false],
+    ["Bob", undefined],
+    ["Reviewer", true],
+  ])("does not expose a saved snapshot to %s while the table is running (stored completion: %s)", async (username, completed) => {
+    archive.completed = completed;
     games.table = { gameState: { isCompleted: false } };
-    Account.findOne.mockReturnValue(query({ username: "Bob", staffRole: "admin" }));
-    const socket = makeSocket("Bob");
+    Account.findOne.mockReturnValue(query({ username, staffRole: username === "Reviewer" ? "admin" : "" }));
+    const socket = makeSocket(username);
     await sendReplayGameData(socket, "table");
     expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  it("allows replay access after a live table has finished", async () => {
+    games.table = { gameState: { isCompleted: "liberal" } };
+    const socket = makeSocket();
+    await sendReplayGameData(socket, "table");
+    expect(socket.emit.mock.calls[0][1].chats).toEqual([archive.chats[0], incoming, outgoing, unrelated]);
+  });
+
+  it.each([
+    true,
+    false,
+    undefined,
+  ])("serves archived games after teardown, including abandoned and legacy records (%s)", async (completed) => {
+    archive.completed = completed;
+    const socket = makeSocket();
+    await sendReplayGameData(socket, "table");
+    expect(socket.emit.mock.calls[0][1].chats).toEqual([archive.chats[0], incoming, outgoing, unrelated]);
   });
 
   it.each([
@@ -151,12 +198,170 @@ describe("restricted replay transcripts", () => {
 
   it("fails closed when the account lookup fails", async () => {
     const log = jest.spyOn(console, "log").mockImplementation(() => {});
-    Account.findOne.mockReturnValue({ select: () => ({ lean: () => Promise.reject(new Error("offline")) }) });
+    const accountQuery = query(null);
+    accountQuery.lean.mockRejectedValue(new Error("offline"));
+    Account.findOne.mockReturnValue(accountQuery);
     const socket = makeSocket("Bob");
     await expect(sendReplayGameData(socket, "table")).resolves.toBeUndefined();
     expect(socket.emit).toHaveBeenCalledWith("sendAlert", expect.any(String));
     expect(socket.emit).not.toHaveBeenCalledWith("replayGameData", expect.anything());
     log.mockRestore();
+  });
+});
+
+describe("replay request acknowledgements", () => {
+  it("returns filtered chat in an acknowledgement without broadcasting the legacy event", async () => {
+    const socket = makeSocket("Stranger");
+    const callback = jest.fn();
+    await sendReplayGameData(socket, "table", callback);
+    expect(callback).toHaveBeenCalledWith({
+      success: true,
+      uid: "table",
+      data: {
+        uid: "table",
+        chats: [archive.chats[0], incoming, outgoing, unrelated],
+      },
+    });
+    expect(socket.emit).not.toHaveBeenCalled();
+    expect(Game.findOne().select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: 0,
+        uid: 1,
+        chats: 1,
+        neighborChats: 1,
+        hiddenInfoChat: 1,
+      })
+    );
+    expect(Game.findOne().select.mock.calls[0][0]).not.toHaveProperty("guesses");
+    expect(Game.findOne().maxTimeMS).toHaveBeenCalledWith(3000);
+    expect(Account.findOne().maxTimeMS).toHaveBeenCalledWith(3000);
+  });
+
+  it("loads only public metadata without querying account authorization or exposing archive fields", async () => {
+    Object.assign(archive, {
+      name: "Neighbors",
+      playerChats: "silent",
+      neighborChat: true,
+      guesses: { Bob: "Hitler" },
+    });
+    const callback = jest.fn();
+    const socket = makeSocket("Bob");
+    await sendReplayMetadata(socket, "table", callback);
+    expect(callback).toHaveBeenCalledWith({
+      success: true,
+      uid: "table",
+      data: {
+        uid: "table",
+        name: "Neighbors",
+        playerChats: "silent",
+        neighborChat: true,
+      },
+    });
+    expect(Account.findOne).not.toHaveBeenCalled();
+    const projection = Game.findOne().select.mock.calls[0][0];
+    for (const field of ["chats", "neighborChats", "hiddenInfoChat", "guesses", "winningPlayers", "losingPlayers"])
+      expect(projection).not.toHaveProperty(field);
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    undefined,
+    { uid: "table" },
+  ])("reports missing or legacy transcript archives as unavailable (%j)", async (value) => {
+    Game.findOne.mockReturnValue(query(value));
+    const callback = jest.fn();
+    await sendReplayGameData(makeSocket(), "table", callback);
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, uid: "table", code: "unavailable" })
+    );
+  });
+
+  it("distinguishes an intentionally empty transcript from a missing archive", async () => {
+    Game.findOne.mockReturnValue(query({ uid: "table", chats: [] }));
+    const callback = jest.fn();
+    await sendReplayGameData(makeSocket(), "table", callback);
+    expect(callback).toHaveBeenCalledWith({ success: true, uid: "table", data: { uid: "table", chats: [] } });
+  });
+
+  it.each([
+    "table?x=1",
+    "../table",
+    "a".repeat(201),
+    {},
+    [],
+  ])("rejects invalid IDs before querying (%j)", async (uid) => {
+    const callback = jest.fn();
+    await sendReplayGameData(makeSocket(), uid, callback);
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "invalid" }));
+    expect(Game.findOne).not.toHaveBeenCalled();
+  });
+
+  it("checks for a running game again after authorization resolves", async () => {
+    let authorize;
+    const accountQuery = query(null);
+    accountQuery.lean.mockReturnValue(
+      new Promise((resolve) => {
+        authorize = resolve;
+      })
+    );
+    Account.findOne.mockReturnValue(accountQuery);
+    const callback = jest.fn();
+    const loading = sendReplayGameData(makeSocket("Reviewer"), "table", callback);
+    await Promise.resolve();
+    games.table = { gameState: { isCompleted: false } };
+    authorize({ username: "Reviewer", staffRole: "admin" });
+    await loading;
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "unavailable" }));
+  });
+
+  it("does not return a privileged response after the socket identity changes", async () => {
+    let authorize;
+    const accountQuery = query(null);
+    accountQuery.lean.mockReturnValue(
+      new Promise((resolve) => {
+        authorize = resolve;
+      })
+    );
+    Account.findOne.mockReturnValue(accountQuery);
+    const socket = makeSocket("Reviewer");
+    const callback = jest.fn();
+    const loading = sendReplayGameData(socket, "table", callback);
+    await Promise.resolve();
+    socket.handshake.session.passport.user = "Stranger";
+    authorize({ username: "Reviewer", staffRole: "admin" });
+    await loading;
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "unavailable" }));
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  it("bounds duplicate reads and reports a timeout without releasing an unsettled database request", async () => {
+    jest.useFakeTimers();
+    let finish;
+    const gameQuery = query(null);
+    gameQuery.lean.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    Game.findOne.mockReturnValue(gameQuery);
+    const socket = makeSocket();
+    const callback = jest.fn();
+    const loading = sendReplayGameData(socket, "table", callback);
+    const duplicate = jest.fn();
+    await sendReplayGameData(socket, "table", duplicate);
+    expect(duplicate).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "busy" }));
+    jest.advanceTimersByTime(8000);
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "failed" }));
+    await sendReplayGameData(socket, "table", duplicate);
+    expect(Game.findOne).toHaveBeenCalledTimes(1);
+    finish(archive);
+    await loading;
+    expect(callback).toHaveBeenCalledTimes(1);
+    Game.findOne.mockReturnValue(query(archive));
+    const retry = jest.fn();
+    await sendReplayGameData(socket, "table", retry);
+    expect(retry).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+    jest.useRealTimers();
   });
 });
 

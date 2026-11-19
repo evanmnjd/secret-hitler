@@ -318,6 +318,54 @@ it.each([
 });
 
 it.each([
+  [8, 8, "liberal"], // A practice win reaches exactly 10 XP.
+  [9, 9, "liberal"], // A practice win skips from 9 to 11 XP.
+  [9, 9, "fascist"], // Player2 loses and reaches exactly 10 XP.
+  [10, 2, "liberal"], // Old stuck account: lifetime qualifies independently.
+  [11, 500, "fascist"],
+  [500, 9, "liberal"], // Reported long-time practice-only account.
+  [2, 9, "liberal"], // Seasonal qualification must not grant lifetime Rainbow.
+  [7, 7, "liberal"], // Still below the threshold after a win.
+])("grants practice-only Rainbow from %i lifetime / %i seasonal XP (%s win)", async (overall, season, winner) => {
+  const initial = seeds();
+  const before = initial[2];
+  Object.assign(before, { xpOverall: overall, xpSeason: season, isRainbowOverall: false, isRainbowSeason: false });
+  seedStore(initial);
+  connect(before.username);
+  Object.assign(models.userList[0], {
+    xpOverall: overall,
+    xpSeason: season,
+    isRainbowOverall: false,
+    isRainbowSeason: false,
+  });
+  const priorRanked = _.pick(before, ["eloOverall", "eloSeason", "rating", "lastRankedGameAt", "wins", "losses"]);
+
+  await finish(completionFixture(true, winner), winner);
+
+  // Reload from the persisted record, rather than only checking the mutated live document.
+  const saved = Account.hydrate(_.cloneDeep(storedAccounts.get(before.username)));
+  const gain = winner === "liberal" ? 2 : 1;
+  expect(saved.xpOverall).toBe(overall + gain);
+  expect(saved.xpSeason).toBe(season + gain);
+  expect(saved.isRainbowOverall).toBe(overall + gain >= 10);
+  expect(saved.isRainbowSeason).toBe(season + gain >= 10);
+  expect(_.pick(saved.toObject(), Object.keys(priorRanked))).toEqual(priorRanked);
+  expect(saved.badges.some((badge) => badge.id === "xp10")).toBe(overall + gain >= 10);
+  if (saved.isRainbowOverall) expect(saved.dateRainbowOverall).toEqual(new Date(now));
+  else expect(saved.dateRainbowOverall).toBeUndefined();
+  expect(models.userList[0]).toMatchObject({
+    xpOverall: saved.xpOverall,
+    xpSeason: saved.xpSeason,
+    isRainbowOverall: saved.isRainbowOverall,
+    isRainbowSeason: saved.isRainbowSeason,
+  });
+  // The games-played badge may save separately; XP itself must only be awarded once.
+  expect(
+    writes.filter((write) => write.username === before.username && write.update.$set?.xpOverall !== undefined)
+  ).toHaveLength(1);
+});
+
+it.each([
   false,
   true,
 ])("leaves ranked fields and leaderboard eligibility unwritten (fields initially absent %s)", async (absent) => {
@@ -437,13 +485,24 @@ it("includes Practice-only XP in the daily refresh and rolls its baseline withou
       cursor: () => ({
         eachAsync: async (visit) => {
           for (const row of rows)
-            await visit(projection ? _.pick(row, Object.keys(projection)) : Account.hydrate(_.cloneDeep(row)));
+            await visit(
+              filter.lastCompletedGame
+                ? Account.hydrate(projection ? _.pick(row, ["_id", ...Object.keys(projection)]) : _.cloneDeep(row))
+                : _.pick(row, Object.keys(projection))
+            );
         },
       }),
     };
     return query;
   });
-  const publish = jest.spyOn(Leaderboard, "findByIdAndUpdate").mockResolvedValue({});
+  let snapshot = null;
+  const read = jest.spyOn(Leaderboard, "findById").mockImplementation(() => ({
+    select: () => ({ lean: () => Promise.resolve(snapshot) }),
+  }));
+  const publish = jest.spyOn(Leaderboard, "findByIdAndUpdate").mockImplementation(async (_id, data) => {
+    snapshot = data;
+    return {};
+  });
   try {
     const first = await refreshLeaderboards({ nowMs: now, log: jest.fn() });
     expect(first.dailyLeaderboardXP).toHaveLength(5);
@@ -460,9 +519,10 @@ it("includes Practice-only XP in the daily refresh and rolls its baseline withou
     expect(first.seasonalLeaderboardElo).toEqual([]);
     const second = await refreshLeaderboards({ nowMs: now, log: jest.fn() });
     expect(second.dailyLeaderboardXP).toHaveLength(5);
-    expect(second.dailyLeaderboardXP.every((row) => row.dailyXPDifference === 0)).toBe(true);
+    expect(second.dailyLeaderboardXP).toEqual(first.dailyLeaderboardXP);
     expect(second.seasonalLeaderboardElo).toEqual([]);
   } finally {
+    read.mockRestore();
     publish.mockRestore();
   }
 });

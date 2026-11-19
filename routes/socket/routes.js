@@ -27,6 +27,7 @@ const {
   handleAddNewModDMChat,
 } = require("./user-events");
 const { handleAEMMessages } = require("./util");
+const { handleModAccountExistence } = require("./user-events/mod-account-existence");
 const { handleMuteNeighborChat, handleReportNeighborChat } = require("./user-events/neighbor-chat");
 const {
   sendPlayerNotes,
@@ -38,6 +39,7 @@ const {
   sendGeneralChats,
   sendUserList,
   sendReplayGameData,
+  sendReplayMetadata,
   sendSignups,
   sendAllSignups,
   sendPrivateSignups,
@@ -64,6 +66,7 @@ const { saveAndDeleteGame } = require("./game/end-game");
 const { games, emoteList, cloneSettingsFromRedis, modDMs, getStaffList } = require("./models");
 const Account = require("../../models/account");
 const { sendModActionPage } = require("./mod-action-pages");
+const { handleAccountIPLookup } = require("./user-events/mod-account-ips");
 const { TOU_CHANGES } = require("../../src/frontend-scripts/node-constants.js");
 const version = require("../../version");
 const https = require("https");
@@ -72,7 +75,9 @@ const { selectPlayerToAssassinate } = require("./game/assassination");
 const { instrumentSocket } = require("./bandwidth-diagnostics");
 const { recordSocketConnection, recordSocketDisconnect, recordUserListRequest } = require("./abuse-monitor");
 const mongoose = require("mongoose");
+const { handleAccountBanStatus } = require("./user-events/mod-account-ban-status");
 const { ensureNewPlayerLobby, shouldSurviveEmptyPregame } = require("./system-lobbies/new-player");
+const { hasRemainingPlayers } = require("./game-lifecycle");
 
 let modUserNames = [],
   editorUserNames = [],
@@ -87,15 +92,29 @@ const gamesGarbageCollector = () => {
     // Empty intake is intentional, even with stale abandonment metadata; started cohorts are not exempt.
     if (shouldSurviveEmptyPregame(currentGame)) return;
 
+    const empty = !hasRemainingPlayers(currentGame);
+    const emptyPregame = empty && !currentGame.gameState.isTracksFlipped;
+    // Recover rooms missed by a leave event or a failed teardown lookup. Remade
+    // games are terminal even when someone remains on their old results screen.
+    if (empty && currentGame.gameState.isTracksFlipped && !currentGame.general.timeAbandoned) {
+      currentGame.general.timeAbandoned = currentTime;
+    }
+    if (currentGame.general.isRemade && !currentGame.general.timeRemade) {
+      currentGame.general.timeRemade = currentTime.getTime();
+    }
     const completedTimer =
       currentGame.gameState &&
       currentGame.gameState.isCompleted &&
       currentGame.gameState.timeCompleted &&
-      new Date(currentGame.gameState.timeCompleted + 1000 * 60 * 2);
+      new Date(new Date(currentGame.gameState.timeCompleted).getTime() + 1000 * 60 * 2);
+    const remadeTimer =
+      currentGame.general.isRemade &&
+      currentGame.general.timeRemade &&
+      new Date(new Date(currentGame.general.timeRemade).getTime() + 1000 * 60 * 2);
     const abandonedTimer =
       currentGame.general &&
       currentGame.general.timeAbandoned &&
-      new Date(currentGame.general.timeAbandoned.getTime() + 1000 * 60 * 2);
+      new Date(new Date(currentGame.general.timeAbandoned).getTime() + 1000 * 60 * 2);
 
     // To come maybe later
     // const modDeleteTimer = games[gameName].general.modDeleteDelay && new Date(games[gameName].general.modDeleteDelay.getTime() + 900000);
@@ -115,8 +134,10 @@ const gamesGarbageCollector = () => {
     // );
 
     toDelete =
-      (!games[gameName].general.modDeleteDelay && completedTimer && completedTimer < currentTime) ||
-      (abandonedTimer && abandonedTimer < currentTime);
+      emptyPregame ||
+      (!currentGame.general.modDeleteDelay &&
+        ((completedTimer && completedTimer <= currentTime) || (remadeTimer && remadeTimer <= currentTime))) ||
+      (abandonedTimer && abandonedTimer <= currentTime);
 
     // if (games[gameName] && modDeleteTimer && modDeleteTimer < currentTime) {
     // console.log('Mod Delete Delay Timer Expired. Deleting... ');
@@ -421,6 +442,10 @@ module.exports.socketRoutes = () => {
         }
       });
 
+      socket.on("lookupAccountIPs", (data, callback) => {
+        handleAccountIPLookup(socket, data, callback);
+      });
+
       // user-events
       socket.on("requestUserList", () => {
         sendUserListWithThrottle("requestUserList");
@@ -591,6 +616,9 @@ module.exports.socketRoutes = () => {
         handleUpdatedTheme(socket, passport, data);
       });
 
+      socket.on("checkModAccountExists", (request, callback) => {
+        handleModAccountExistence(socket, request, callback);
+      });
       socket.on("updateModAction", (data) => {
         if (authenticated && isAEM) {
           handleModerationAction(socket, passport, data, false, modUserNames, editorUserNames.concat(adminUserNames));
@@ -739,6 +767,9 @@ module.exports.socketRoutes = () => {
           sendModInfo(games, socket, count, isTrial, isAEM);
         }
       });
+      socket.on("getAccountBanStatus", (request, callback) => {
+        return handleAccountBanStatus(socket, request, callback);
+      });
       socket.on("subscribeModChat", (uid) => {
         // This handler isn't zod-hardened yet and mutates live game state inside an async .then with no
         // rejection path, so an edge-case game shape here would otherwise surface as an unhandledRejection
@@ -836,8 +867,11 @@ module.exports.socketRoutes = () => {
           updateUserStatus(passport);
         }
       });
-      socket.on("getReplayGameData", (uid) => {
-        sendReplayGameData(socket, uid);
+      socket.on("getReplayGameData", (uid, callback) => {
+        sendReplayGameData(socket, uid, callback);
+      });
+      socket.on("getReplayMetadata", (uid, callback) => {
+        sendReplayMetadata(socket, uid, callback);
       });
       // election
 

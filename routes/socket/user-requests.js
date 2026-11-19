@@ -250,30 +250,119 @@ module.exports.sendPlayerNotes = (socket, data) => {
   }
 };
 
-/**
- * @param {object} socket - user socket reference.
- * @param {string} uid - uid of game.
- */
-module.exports.sendReplayGameData = async (socket, uid) => {
+// Chat is loaded separately from the small mode/name metadata needed to draw the board.
+const replayMetadataFields = [
+  "uid",
+  "name",
+  "flag",
+  "date",
+  "playerChats",
+  "neighborChat",
+  "playerCount",
+  "season",
+  "isRainbow",
+  "eloMinimum",
+  "rebalance6p",
+  "rebalance7p",
+  "rebalance9p",
+  "rerebalance9p",
+  "rebalance9p2f",
+  "isTournyFirstRound",
+  "isTournySecondRound",
+  "casualGame",
+  "practiceGame",
+  "customGame",
+  "unlistedGame",
+  "isVerifiedOnly",
+  "timedMode",
+  "blindMode",
+  "monarchistSH",
+  "avalonSH",
+  "noTopdecking",
+  "completed",
+];
+const replayProjection = (withChats) =>
+  Object.fromEntries([
+    ["_id", 0],
+    ...replayMetadataFields.map((field) => [field, 1]),
+    ...(withChats ? ["chats", "neighborChats", "hiddenInfoChat"].map((field) => [field, 1]) : []),
+  ]);
+const replayRequests = new WeakMap();
+const replayUsername = (socket) => socket.handshake?.session?.passport?.user;
+const replayTableRunning = (uid) => games[uid] && !games[uid].gameState?.isCompleted;
+
+const sendReplayArchive = async (socket, uid, callback, withChats) => {
+  const acknowledge = typeof callback === "function" ? callback : null;
+  let answered = false;
+  const fail = (code, message) => {
+    if (answered) return;
+    answered = true;
+    if (acknowledge)
+      acknowledge({
+        success: false,
+        uid: typeof uid === "string" && uid.length <= 200 ? uid : undefined,
+        code,
+        message,
+      });
+    else if (code === "failed") socket.emit("sendAlert", message);
+  };
   const parsed = replayUidSchema.safeParse(uid);
-  if (!parsed.success) return;
+  if (!parsed.success) return fail("invalid", "Invalid replay identifier.");
+  let pending = replayRequests.get(socket);
+  if (!pending) {
+    pending = new Set();
+    replayRequests.set(socket, pending);
+  }
+  const kind = withChats ? "chat" : "metadata";
+  if (pending.has(kind)) return fail("busy", "This replay request is already loading. Please try again shortly.");
+  pending.add(kind);
+  // Keep the in-flight guard until the query settles, including after this response deadline.
+  // Repeated retries must not pile up more database reads if a connection stops responding.
+  const deadline = setTimeout(() => fail("failed", "Replay data took too long to load. Please try again."), 8000);
+  const username = replayUsername(socket);
   try {
-    const username = socket.handshake?.session?.passport?.user;
-    const [game, account] = await Promise.all([
-      Game.findOne({ uid: parsed.data }).select({ _id: 0, _v: 0 }).lean(),
-      typeof username === "string" ? Account.findOne({ username }).select("username staffRole").lean() : null,
-    ]);
-    if (!game) return;
-    const live = games[uid];
-    // A saved snapshot of a still-running table must not expose live identities, roles, or other conversations.
-    if (live && !live.gameState?.isCompleted) return;
-    // Read current DB authorization; a demoted reviewer must not retain access through a connected socket.
-    socket.emit("replayGameData", replayForViewer(game, account?.username, isChatReviewer(account)));
+    const game = await Game.findOne({ uid: parsed.data }).select(replayProjection(withChats)).maxTimeMS(3000).lean();
+    if (answered) return;
+    if (!game)
+      return fail(
+        "unavailable",
+        withChats ? "The chat archive is unavailable for this replay." : "Replay details are unavailable."
+      );
+    if (replayTableRunning(uid)) return fail("unavailable", "Replay data is unavailable while this game is running.");
+    // Look up current authorization only after the archive has arrived; socket claims can be stale.
+    const account =
+      withChats && typeof username === "string"
+        ? await Account.findOne({ username }).select("username staffRole").maxTimeMS(3000).lean()
+        : null;
+    if (answered) return;
+    if (socket.disconnected || replayUsername(socket) !== username || replayTableRunning(uid)) {
+      return fail("unavailable", "This replay request is no longer available. Please try again.");
+    }
+    if (withChats && ![game.chats, game.neighborChats, game.hiddenInfoChat].some(Array.isArray)) {
+      return fail("unavailable", "The chat archive is unavailable for this replay.");
+    }
+    const data = withChats
+      ? replayForViewer(game, account?.username, isChatReviewer(account), { includeAllNeighborChats: true })
+      : Object.fromEntries(
+          replayMetadataFields.filter((field) => game[field] !== undefined).map((field) => [field, game[field]])
+        );
+    answered = true;
+    if (acknowledge) acknowledge({ success: true, uid, data });
+    else if (withChats) socket.emit("replayGameData", data);
   } catch (err) {
-    console.log(err, "err retrieving replay chat");
-    socket.emit("sendAlert", "Unable to load replay chat right now.");
+    console.log(err, "err retrieving replay data");
+    fail("failed", "Unable to load replay data right now. Please try again.");
+  } finally {
+    clearTimeout(deadline);
+    pending.delete(kind);
   }
 };
+
+/** Load the viewer-filtered archived transcript, retaining the legacy socket event for old clients. */
+module.exports.sendReplayGameData = (socket, uid, callback) => sendReplayArchive(socket, uid, callback, true);
+
+/** Load only public name/mode fields; this never retrieves or emits the archived transcript. */
+module.exports.sendReplayMetadata = (socket, uid, callback) => sendReplayArchive(socket, uid, callback, false);
 
 /**
  * @param {object} socket - user socket reference.
