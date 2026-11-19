@@ -252,3 +252,8 @@ it("requires a session and contains theme-save failures", async () => {
   await expect(handleUpdatedTheme({}, { user: "Player" }, { backgroundColor: "#ffffff" })).resolves.toBeUndefined();
   expect(console.warn).toHaveBeenCalledWith("Theme update failed:", "Error");
 });
+
+it("skips persistence for an empty theme update", async () => {
+  await handleUpdatedTheme({}, { user: "Player" }, {});
+  expect(Account.findOne).not.toHaveBeenCalled();
+});

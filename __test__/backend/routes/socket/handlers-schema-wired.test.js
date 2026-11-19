@@ -45,6 +45,10 @@ const expectWired = async (fn, args) => {
 };
 
 describe("every schema-guarded socket handler has its schema wired", () => {
+  const Account = require("../../../../models/account");
+  // Wiring checks need no database, including when a handler returns its lookup promise.
+  beforeEach(() => jest.spyOn(Account, "findOne").mockResolvedValue(null));
+  afterEach(() => jest.restoreAllMocks());
   const ue = require("../../../../routes/socket/user-events");
   const election = require("../../../../routes/socket/game/election");
   const electionUtil = require("../../../../routes/socket/game/election-util");

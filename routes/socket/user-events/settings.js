@@ -20,6 +20,7 @@ module.exports.handleUpdatedTheme = (socket, passport, data) => {
   const parsed = themeSchema.safeParse(data);
   if (!parsed.success) return;
   data = parsed.data; // field + colour fields guaranteed to be strings when present
+  if (!THEME_COLOR_FIELDS.some((field) => data[field])) return;
 
   return Account.findOne({ username: passport.user })
     .then(async (account) => {
