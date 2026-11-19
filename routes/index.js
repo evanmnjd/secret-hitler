@@ -19,6 +19,7 @@ const moment = require("moment");
 const { idQuerySchema, usernameQuerySchema, cardbackBodySchema } = require("./index.schema");
 const bandwidthDiagnostics = require("./bandwidth-diagnostics-state");
 const { STARTING_PUBLIC_RATING } = require("./socket/rating/public-ladder");
+const { registerReplayPreviews } = require("./replay-previews");
 
 /**
  * @param {object} req - express request object.
@@ -38,6 +39,7 @@ const canControlBandwidthDiagnostics = (account) =>
   account && (account.staffRole === "admin" || account.staffRole === "editor");
 
 module.exports = () => {
+  registerReplayPreviews(app);
   /**
    * @param {object} req - express request object.
    * @param {object} res - express response object.
