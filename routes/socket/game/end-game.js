@@ -7,7 +7,7 @@ const { clearFlappyTimers } = require("./flappy-timers");
 const { clearVoteSpamTimers } = require("./vote-timers");
 const { sendUserList, sendGameList } = require("../user-requests.js");
 const Account = require("../../../models/account.js");
-const Game = require("../../../models/game");
+const { ARCHIVE_VERSION, expectsSummary, saveReplayArchive } = require("./replay-archive");
 const buildEnhancedGameSummary = require("../../../models/game-summary/buildEnhancedGameSummary");
 const { updateProfiles } = require("../../../models/profile/utils");
 const debug = require("debug")("game:summary");
@@ -59,6 +59,8 @@ const generateGameObject = (game) => {
   if (game?.gameState && game?.gameState?.isCompleted) {
     return {
       uid: game?.general?.uid,
+      archiveVersion: ARCHIVE_VERSION,
+      summaryExpected: expectsSummary(game),
       name: game?.general?.name,
       date: new Date(),
       guesses: objMap(game?.guesses, (_, g) => g?.toString()),
@@ -113,6 +115,8 @@ const generateGameObject = (game) => {
 
   return {
     uid: game?.general?.uid,
+    archiveVersion: ARCHIVE_VERSION,
+    summaryExpected: expectsSummary(game),
     name: game?.general?.name,
     date: new Date(),
     guesses: objMap(game?.guesses, (_, g) => g?.toString()),
@@ -172,73 +176,33 @@ const buildDeltaChat = (eachPlayer, label, active, secondary, i) => ({
  * @param {object} game - game to act on.
  */
 const saveGame = (game) => {
-  const summary = game.gameState.isCompleted && game.private.summary && game.private.summary.publish();
-
-  /**
-   * @param {object} - object describing game model.
-   */
-  const gameToSave = new Game(generateGameObject(game));
-
-  let enhanced;
-
   try {
+    const summary = game.gameState.isCompleted && game.private.summary && game.private.summary.publish();
     if (summary && summary.toObject() && game.general.uid !== "devgame" && !game.general.private) {
-      enhanced = buildEnhancedGameSummary(summary.toObject());
-      updateProfiles(game, enhanced);
-      if (!game.summarySaved) {
-        // A rejected save() is NOT caught by this try/catch (it's async) — and an unhandled
-        // rejection is fatal: bin/dev.js logs and exits, ending every live game. The game is over
-        // by the time we're here, so a failed persist must be logged, not escalated.
-        summary.save().catch((error) => console.log(error, "err saving summary in saveGame"));
-        game.summarySaved = true;
-      }
-    } else {
-      // console.log(summary, 'problem with summary');
+      // Profile/rating effects run once on completion, never inside database retries. A parser
+      // failure must not prevent the original summary and moderation transcript being archived.
+      updateProfiles(game, buildEnhancedGameSummary(summary.toObject()));
     }
   } catch (error) {
     console.log(error, "error in enhanced/end-game");
   }
 
-  debug("Saving game: %O", summary);
-  gameToSave.save().catch((error) => console.log(error, "err saving game in saveGame"));
+  debug("Saving replay: %s", game.general.uid);
+  return saveReplayArchive(game, generateGameObject);
 };
 
-// Save a game and then potentially perform another action (usually deleting the game)
-const saveOrUpdateGame = (gameID, callback) => {
+// Delete only after confirmed summary AND transcript writes. On failure the existing collector
+// can retry the same live data; summarySaved is set by the writer only after acknowledgement.
+const saveOrUpdateGame = async (gameID, callback) => {
   const gameInMemory = games[gameID];
-
-  Game.findOne({ uid: gameID })
-    .then((game) => {
-      if (game) {
-        const newObject = generateGameObject(gameInMemory); // in theory this should only be chats (as the only time a game is saved and *not* deleted is on game end) but for forwards compatibility all keys are checked
-
-        for (const key in newObject) {
-          if (newObject.hasOwnProperty(key) && game[key] !== newObject[key]) {
-            // check in order to prevent unnecessarily marking fields as modified in mongoose
-            game[key] = newObject[key];
-          }
-        }
-
-        // Backstop for the teardown guard in saveAndDeleteGame: if two writers ever do reach the
-        // same doc, `chats` is an Array, and a wholesale $set on an array makes mongoose put __v in
-        // the where-clause and $inc it — so the loser rejects with a VersionError. Unhandled, that
-        // rejection is fatal (bin/dev.js exits), which is how a save conflict on an already-finished
-        // game ended every live game in production. Both writers persist the same in-memory game, so
-        // the loser's write is redundant: log it and move on.
-        game.save().catch((err) => console.log(err, "err saving game in saveOrUpdateGame"));
-      } else {
-        saveGame(gameInMemory);
-      }
-
-      if (callback) callback();
-    })
-    .catch((err) => {
-      console.log(err, "err in saveOrUpdateGame");
-      // The callback (which deletes the game from memory) never ran, so release the teardown guard:
-      // otherwise a transient DB error strands the game in `games` forever. The 30s garbage
-      // collector still sees it as completed/abandoned and will re-attempt the teardown.
-      if (gameInMemory) gameInMemory.isBeingTornDown = false;
-    });
+  if (!gameInMemory) return false;
+  const saved = await saveReplayArchive(gameInMemory, generateGameObject, gameInMemory.replayArchiveMergeStored);
+  if (saved) {
+    if (callback && games[gameID] === gameInMemory) callback();
+  } else {
+    gameInMemory.isBeingTornDown = false;
+  }
+  return saved;
 };
 
 const saveAndDeleteGame = (gameID) => {
@@ -262,7 +226,7 @@ const saveAndDeleteGame = (gameID) => {
   // deleted and their closures pin the whole game object in memory (slow OOM leak).
   clearVoteSpamTimers(game);
 
-  saveOrUpdateGame(gameID, () => {
+  return saveOrUpdateGame(gameID, () => {
     delete games[gameID];
     sendGameList();
     // Moderation may delete waiting intake. Restore only after removal, or ensure would find this old room.
@@ -297,39 +261,35 @@ const endMalformedGame = (game, winningTeamName) => {
   }
   const gameID = Object.keys(games).find((key) => games[key] === game) || game.general?.uid;
   if (gameID) {
-    const snapshot = {
-      ...game,
-      general: { ...game.general, uid: gameID },
-      private: {
-        ...game.private,
-        seatedPlayers: Array.isArray(game.private?.seatedPlayers)
-          ? game.private.seatedPlayers
-              .filter((player) => player?.role)
-              .map((player) => ({
-                ...player,
-                wonGame: player.role.team === winningTeamName,
-              }))
-          : [],
-      },
+    // A failed write leaves this table for the collector; restore its addressable container too.
+    game.general = { ...game.general, uid: gameID, isRecorded: true };
+    const hadSeatedPlayers = Array.isArray(game.private?.seatedPlayers);
+    game.private = {
+      ...game.private,
+      seatedPlayers: hadSeatedPlayers
+        ? game.private.seatedPlayers
+            .filter((player) => player?.role)
+            .map((player) => ({ ...player, wonGame: player.role.team === winningTeamName }))
+        : [],
     };
-    const replay = generateGameObject(snapshot);
-    const persisted = Game.findOne({ uid: gameID })
-      .then((stored) => {
-        if (!stored) return new Game(replay).save();
-        // A table may already have its initial replay. Keep its known metadata and roster when
-        // live containers were lost, instead of inserting a duplicate or replacing history with blanks.
-        stored.completed = true;
-        stored.winningTeam = replay.winningTeam;
-        if (replay.chats) stored.chats = replay.chats;
-        if (Array.isArray(game.private?.seatedPlayers)) {
-          stored.winningPlayers = replay.winningPlayers;
-          stored.losingPlayers = replay.losingPlayers;
-        }
-        return stored.save();
-      })
-      .catch((error) => console.log(error, "error saving malformed completed game"));
-    // Remove it before broadcasting or releasing clients: leave handlers also inspect live tables.
-    if (games[gameID] === game) delete games[gameID];
+    // Keep the same conservative merge on collector retries after a failed write.
+    game.replayArchiveMergeStored = (stored, replay) => {
+      stored.completed = true;
+      stored.winningTeam = replay.winningTeam;
+      stored.archiveVersion = replay.archiveVersion;
+      stored.summaryExpected = replay.summaryExpected;
+      if (replay.chats) stored.chats = replay.chats;
+      if (replay.neighborChats) stored.neighborChats = replay.neighborChats;
+      if (hadSeatedPlayers) {
+        stored.winningPlayers = replay.winningPlayers;
+        stored.losingPlayers = replay.losingPlayers;
+      }
+    };
+    const persisted = saveReplayArchive(game, generateGameObject, game.replayArchiveMergeStored).then((saved) => {
+      if (saved && games[gameID] === game) delete games[gameID];
+      if (!saved) game.isBeingTornDown = false;
+      return saved;
+    });
     for (const socket of Object.values(io.sockets.sockets)) {
       if (
         socket.rooms?.[gameID] ||
@@ -463,11 +423,11 @@ module.exports.completeGame = (game, winningTeamName) => {
   game.private.unSeatedGameChats.push(chat, remainingPoliciesChat);
 
   game.summary = game.private.summary;
-  debug("Final game summary: %O", game.summary.publish().toObject());
+  debug("Final game summary for %s", game.general.uid);
 
   sendInProgressGameUpdate(game);
 
-  saveGame(game);
+  const replaySaved = saveGame(game);
 
   game.general.isRecorded = true;
 
@@ -978,4 +938,5 @@ module.exports.completeGame = (game, winningTeamName) => {
   }
 
   sendInProgressGameUpdate(game);
+  return replaySaved;
 };

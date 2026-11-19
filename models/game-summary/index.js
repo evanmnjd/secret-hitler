@@ -14,6 +14,7 @@ const { Schema } = mongoose;
 const optionalArray = () => ({ type: Array, default: undefined });
 const gameSummary = new Schema({
   _id: String,
+  archiveVersion: Number, // Optional: legacy documents remain versionless until explicitly rewritten.
   date: Date,
   gameSetting: {
     rebalance6p: Boolean,
