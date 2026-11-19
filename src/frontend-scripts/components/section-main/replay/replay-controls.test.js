@@ -116,14 +116,15 @@ it.each([
   row.remove();
 });
 
-it("keeps replay display toggles in a wrapping toolbar and preserves their state changes", () => {
+it("keeps display toggles available during loading and waits for the board before opening chat", () => {
   const wrapper = shallow(<ReplayWrapper replay={{ status: "LOADING" }} />, { disableLifecycleMethods: true });
   wrapper.setState({ legacyReplay: false });
   expect(wrapper.find(".replay-actions button")).toHaveLength(4);
+  expect(wrapper.find(".displaychats").prop("disabled")).toBe(true);
   wrapper.find(".displaychats").simulate("click");
   wrapper.find(".displayroles").simulate("click");
   wrapper.find(".displaydeck").simulate("click");
-  expect(wrapper.state()).toMatchObject({ chatsShown: true, hiddenInfoShown: false, deckShown: true });
+  expect(wrapper.state()).toMatchObject({ chatsShown: false, hiddenInfoShown: false, deckShown: true });
 });
 
 it("keeps display actions beside the loaded board and usable while viewing saved chat", () => {
@@ -139,7 +140,11 @@ it("keeps display actions beside the loaded board and usable while viewing saved
     />,
     { disableLifecycleMethods: true }
   );
-  wrapper.setState({ legacyReplay: false, gameData: { uid: game.id, chats: [{ chat: "Saved chat" }] } });
+  wrapper.setState({
+    legacyReplay: false,
+    chatStatus: "READY",
+    gameData: { uid: game.id, chats: [{ chat: "Saved chat" }] },
+  });
   const view = () => wrapper.find("Replay").dive();
 
   // Actions must share the controls pane rather than add a full-width row above the board.
