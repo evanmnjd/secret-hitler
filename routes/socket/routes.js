@@ -296,6 +296,8 @@ module.exports.socketRoutes = () => {
 
       // defensively check if game exists
       socket.use((packet, next) => {
+        // Queued packets from a replaced connection no longer belong to the active session.
+        if (socket.disconnected || socket._replacedBySocketId) return;
         // Drop client packets that reuse a reserved event name before they can reach any listener
         // (see RESERVED_INBOUND_EVENTS). Not calling next() ends dispatch without firing the handler.
         if (Array.isArray(packet) && RESERVED_INBOUND_EVENTS.has(packet[0])) return;
@@ -788,7 +790,7 @@ module.exports.socketRoutes = () => {
         const game = findGame({ uid });
         if (authenticated && (isAEM || (isTourneyMod && game?.general?.unlistedGame))) {
           if (game && game.private && game.private.seatedPlayers) {
-            handleModPeekVotes(socket, passport, game, data.modName);
+            handleModPeekVotes(socket, passport, game);
           } else {
             socket.emit("sendAlert", "Game is missing.");
           }
@@ -800,7 +802,7 @@ module.exports.socketRoutes = () => {
         const game = findGame({ uid });
         if (authenticated && (isAEM || (isTourneyMod && game?.general?.unlistedGame))) {
           if (game && game.private && game.private.seatedPlayers) {
-            handleModPeekRemakes(socket, passport, game, data.modName);
+            handleModPeekRemakes(socket, passport, game);
           } else {
             socket.emit("sendAlert", "Game is missing.");
           }
@@ -817,7 +819,7 @@ module.exports.socketRoutes = () => {
         // AEM mods still reach the inner "Game is missing." alert as before.
         if (authenticated && (isAEM || (isTourneyMod && game?.general?.unlistedGame))) {
           if (game && game.private && game.private.seatedPlayers) {
-            handleGameFreeze(socket, passport, game, data.modName);
+            handleGameFreeze(socket, passport, game);
           } else {
             socket.emit("sendAlert", "Game is missing.");
           }
