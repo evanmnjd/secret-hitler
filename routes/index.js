@@ -22,6 +22,7 @@ const { STARTING_PUBLIC_RATING } = require("./socket/rating/public-ladder");
 const cacheBustAssets =
   process.env.NODE_ENV === "production" ||
   (process.env.NODE_ENV === "development" && process.env.SHIO_LOCAL_TESTING === "1");
+const { registerReplayPreviews } = require("./replay-previews");
 
 /**
  * @param {object} req - express request object.
@@ -41,6 +42,7 @@ const canControlBandwidthDiagnostics = (account) =>
   account && (account.staffRole === "admin" || account.staffRole === "editor");
 
 module.exports = () => {
+  registerReplayPreviews(app);
   /**
    * @param {object} req - express request object.
    * @param {object} res - express response object.
