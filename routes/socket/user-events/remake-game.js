@@ -3,6 +3,7 @@ const { sendInProgressGameUpdate } = require("../util.js");
 const _ = require("lodash");
 const { chatReplacements } = require("../chatReplacements");
 const { saveAndDeleteGame } = require("../game/end-game");
+const { saveReplaySummary } = require("../game/replay-archive");
 const { sendGameList, sendGameInfo } = require("../user-requests");
 
 const { updateSeatedUser } = require("./join-game");
@@ -237,15 +238,7 @@ module.exports.handleUpdatedRemakeGame = (passport, game, data, socket) => {
     });
 
     game.general.status = "Game is being remade..";
-    if (!game.summarySaved) {
-      const summary = game.private.summary.publish();
-      if (summary && summary.toObject() && game.general.uid !== "devgame" && !game.general.private) {
-        // An unhandled rejection here is fatal (bin/dev.js logs and exits), so a failed summary
-        // write would end every live game. Log it instead — the game is being remade regardless.
-        summary.save().catch((err) => console.log(err, "err saving summary in handleUpdatedRemakeGame"));
-        game.summarySaved = true;
-      }
-    }
+    void saveReplaySummary(game);
     sendInProgressGameUpdate(game);
 
     setTimeout(() => {

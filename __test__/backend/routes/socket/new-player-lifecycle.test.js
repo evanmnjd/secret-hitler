@@ -40,7 +40,7 @@ beforeAll(() => {
 
 // Teardown and restoration each cross promise boundaries; drain them without real-time sleeps.
 const settle = async () => {
-  for (let step = 0; step < 8; step++) await Promise.resolve();
+  for (let step = 0; step < 24; step++) await Promise.resolve();
 };
 
 beforeEach(() => {

@@ -32,7 +32,12 @@ const makeGame = (general = {}) => ({
     policies: ["liberal", "fascist"],
     unSeatedGameChats: [],
     replayGameChats: [],
-    summary: { publish: () => ({ toObject: () => null }) },
+    summary: {
+      publish: () => ({
+        toObject: () => ({ _id: general.uid || "ranked-integration", players: [], logs: [] }),
+        save: jest.fn().mockResolvedValue(),
+      }),
+    },
   },
   chats: [],
 });
@@ -103,6 +108,7 @@ describe("S25 completeGame integration", () => {
     global.io = { sockets: { sockets: {} } };
     userList.length = 0;
     jest.spyOn(console, "log").mockImplementation(() => {});
+    jest.spyOn(console, "error").mockImplementation(() => {});
     jest.spyOn(Account, "find").mockResolvedValue([]);
     jest.spyOn(Account.collection, "updateOne").mockImplementation((filter, update, options, callback) => {
       accountWrites.push({ filter, update });
@@ -145,12 +151,64 @@ describe("S25 completeGame integration", () => {
   const finish = async (game, accounts, winner = "liberal") => {
     games[game.general.uid] = game;
     Account.find.mockResolvedValue(accounts);
-    completeGame(game, winner);
+    await completeGame(game, winner);
     await Promise.resolve();
     await Promise.all(accountSaves);
     await Promise.all(gameSaves);
     await Promise.resolve();
   };
+
+  it("awaits both archive records before deleting and does not repeat profile or rating effects", async () => {
+    const game = makeGame();
+    games[game.general.uid] = game;
+    let finishSummary;
+    const summarySaved = new Promise((resolve) => {
+      finishSummary = resolve;
+    });
+    const summary = {
+      toObject: () => ({ _id: game.general.uid, players: [], logs: [] }),
+      save: jest.fn(() => summarySaved),
+    };
+    game.private.summary.publish = () => summary;
+    const completed = completeGame(game, "liberal");
+    const teardown = saveAndDeleteGame(game.general.uid);
+    await Promise.resolve();
+    expect(games[game.general.uid]).toBe(game);
+    expect(game.summarySaved).toBeUndefined();
+    finishSummary();
+    expect(await completed).toBe(true);
+    expect(await teardown).toBe(true);
+    expect(games[game.general.uid]).toBeUndefined();
+    expect(summary.save).toHaveBeenCalledTimes(1);
+    expect(require("../../../../models/profile/utils").updateProfiles).toHaveBeenCalledTimes(1);
+    expect(Account.find).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains completed live data on failed persistence and retries teardown without replaying ratings", async () => {
+    const game = makeGame();
+    games[game.general.uid] = game;
+    Game.findOne.mockRejectedValue(new Error("offline"));
+    expect(await completeGame(game, "liberal")).toBe(false);
+    expect(await saveAndDeleteGame(game.general.uid)).toBe(false);
+    expect(games[game.general.uid]).toBe(game);
+    expect(game.isBeingTornDown).toBe(false);
+    Game.findOne.mockResolvedValue(null);
+    expect(await saveAndDeleteGame(game.general.uid)).toBe(true);
+    expect(games[game.general.uid]).toBeUndefined();
+    expect(require("../../../../models/profile/utils").updateProfiles).toHaveBeenCalledTimes(1);
+    expect(Account.find).toHaveBeenCalledTimes(1);
+  });
+
+  it("archives the original summary and transcript even when profile reconstruction fails", async () => {
+    const game = makeGame();
+    require("../../../../models/game-summary/buildEnhancedGameSummary").mockImplementationOnce(() => {
+      throw new Error("historical custom shape");
+    });
+    expect(await completeGame(game, "liberal")).toBe(true);
+    expect(game.summarySaved).toBe(true);
+    expect(storedGame.uid).toBe(game.general.uid);
+    expect(require("../../../../models/profile/utils").updateProfiles).not.toHaveBeenCalled();
+  });
 
   it.each([
     false,
@@ -240,8 +298,7 @@ describe("S25 completeGame integration", () => {
     // The initial save predates the account query. Exercise the real second save at teardown and
     // rehydrate its document, rather than assuming an in-memory replay append reached persistence.
     expect(deltaLines(storedGame.chats)).toHaveLength(0);
-    saveAndDeleteGame(game.general.uid);
-    await Promise.resolve();
+    await saveAndDeleteGame(game.general.uid);
     await Promise.all(gameSaves);
     const reloaded = Game.hydrate(storedGame);
     expect(deltaLines(reloaded.toObject().chats)).toEqual(replayLines);
@@ -436,7 +493,25 @@ describe("S25 completeGame integration", () => {
     expect(games[uid]).toBeUndefined();
   });
 
-  it("still releases a malformed table if replay persistence fails", async () => {
+  it("keeps known metadata and roster when a malformed table is retried by the collector", async () => {
+    const game = makeGame({ name: "Known retry table" });
+    await finish(game, makeAccounts());
+    const uid = game.general.uid;
+    const knownPlayers = storedGame.winningPlayers;
+    delete game.general;
+    game.private.seatedPlayers = {};
+    Game.findOne.mockRejectedValueOnce(new Error("offline"));
+    expect(await completeGame(game, "liberal")).toBe(false);
+    expect(games[uid]).toBe(game);
+    expect(game.general.uid).toBe(uid);
+    expect(await saveAndDeleteGame(uid)).toBe(true);
+    expect(games[uid]).toBeUndefined();
+    expect(storedGame.name).toBe("Known retry table");
+    expect(storedGame.winningPlayers).toEqual(knownPlayers);
+    expect(Account.find).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases malformed-table clients but retains recoverable data if replay persistence fails", async () => {
     const game = makeGame();
     const uid = game.general.uid;
     games[uid] = game;
@@ -445,11 +520,12 @@ describe("S25 completeGame integration", () => {
     const socket = { rooms: { [uid]: true }, emit: jest.fn(), leave: jest.fn(), handshake: {} };
     global.io.sockets.sockets.connected = socket;
     await completeGame(game, "liberal");
-    expect(games[uid]).toBeUndefined();
+    expect(games[uid]).toBe(game);
+    expect(game.isBeingTornDown).toBe(false);
     expect(socket.emit).toHaveBeenCalledWith("toLobby", uid);
     expect(socket.leave).toHaveBeenCalledWith(uid);
     expect(Account.prototype.save).not.toHaveBeenCalled();
-    expect(console.log).toHaveBeenCalledWith(expect.any(Error), "error saving malformed completed game");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("retained for retry"));
   });
 
   it("catches a ranked account lookup failure after the game has ended", async () => {

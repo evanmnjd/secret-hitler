@@ -2,6 +2,8 @@ const mongoose = require("mongoose");
 const { Schema } = mongoose;
 const Game = new Schema({
   uid: { type: String, index: true },
+  archiveVersion: Number, // Absent on legacy archives; do not add a read-time default.
+  summaryExpected: Boolean, // New archives distinguish intentional transcript-only records.
   name: String,
   flag: String,
   date: Date,
