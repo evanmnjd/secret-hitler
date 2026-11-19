@@ -99,12 +99,13 @@ export const fetchProfile = (username) => ({
   username,
 });
 
-export const loadReplay = (summary) => ({
+export const loadReplay = (summary, moment) => ({
   type: "LOAD_REPLAY",
   summary,
+  moment,
 });
 
-export const fetchReplay = (gameId, moment = null) => ({
+export const fetchReplay = (gameId, moment) => ({
   type: "FETCH_REPLAY",
   gameId,
   moment,

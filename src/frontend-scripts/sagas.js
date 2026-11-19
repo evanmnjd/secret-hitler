@@ -1,8 +1,9 @@
-import { put, call, takeLatest } from "redux-saga/effects";
+import { put, call, select, takeLatest } from "redux-saga/effects";
+import { CANCEL } from "redux-saga";
 import buildEnhancedGameSummary from "../../models/game-summary/buildEnhancedGameSummary";
 import buildReplay from "./replay/buildReplay";
 import { updateMidsection } from "./actions/actions";
-import { resolveReplayMoment } from "../shared/replay-moment";
+import { validUid, resolveReplayMoment } from "../shared/replay-moment";
 
 function* fetchProfile(action) {
   const { username } = action;
@@ -20,35 +21,97 @@ function* fetchProfile(action) {
 }
 
 function* closeReplay() {
+  yield put({ type: "CLEAR_REPLAY" });
   yield put(updateMidsection("default"));
 }
 
-function* loadReplay(action) {
-  const { summary } = action;
+const replayFailure = (kind, message) => Object.assign(new Error(message), { kind });
+
+// Bound the complete request, including reading JSON, so a stalled response can be retried.
+export const fetchReplaySummary = (gameId, timeoutMs = 15000) => {
+  if (!validUid(gameId)) return Promise.reject(replayFailure("invalid", "This replay link is invalid."));
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  let timer;
+  const request = Promise.resolve()
+    .then(() => fetch(`/gameSummary?id=${encodeURIComponent(gameId)}`, controller ? { signal: controller.signal } : {}))
+    .then((response) => {
+      if (response.status === 404 || response.status === 410) {
+        throw replayFailure("not_found", "This replay could not be found.");
+      }
+      if (!response.ok) throw replayFailure("server", "The replay server is unavailable. Please try again.");
+      return response.json().catch(() => {
+        throw replayFailure("invalid", "The saved replay could not be read.");
+      });
+    });
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(replayFailure("timeout", "Loading this replay timed out. Please try again."));
+      if (controller) controller.abort();
+    }, timeoutMs);
+  });
+  const result = Promise.race([request, timeout]).finally(() => clearTimeout(timer));
+  result[CANCEL] = () => {
+    if (controller) {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  };
+  return result;
+};
+
+export function* loadReplay(action) {
+  const { summary, requestId, moment } = action;
+  const gameId = action.gameId || summary?._id;
+  if (requestId !== undefined && (yield select((state) => state.replay.requestId)) !== requestId) return;
   try {
+    if (!summary || !Array.isArray(summary.players) || !Array.isArray(summary.logs) || !summary.logs.length) {
+      throw new Error("Incomplete replay archive.");
+    }
     const game = buildEnhancedGameSummary(summary);
     const replay = buildReplay(game);
-    const position = resolveReplayMoment(replay, action.moment);
-
-    yield put({ type: "RECEIVE_REPLAY", replay, game, position });
+    let position;
+    try {
+      position = resolveReplayMoment(replay, moment);
+    } catch (err) {
+      throw replayFailure("moment", err.message);
+    }
+    yield put({ type: "RECEIVE_REPLAY", replay, game, position, requestId });
+    if (requestId !== undefined && (yield select((state) => state.replay.requestId)) !== requestId) return;
     yield put(updateMidsection("replay"));
-  } catch (error) {
-    yield put({ type: "REPLAY_FAILED", error: { kind: "moment", message: error.message }, gameId: summary?._id });
+  } catch (err) {
+    yield put({
+      type: "REPLAY_FAILED",
+      requestId,
+      gameId,
+      error: {
+        kind: err.kind || "invalid",
+        message:
+          err.kind === "moment" ? err.message : "This saved replay is incomplete or damaged and could not be played.",
+      },
+    });
   }
 }
 
-function* fetchReplay(action) {
-  const { gameId } = action;
-
-  yield put({ type: "REQUEST_REPLAY" });
+let replayRequestId = 0;
+export function* fetchReplay(action) {
+  const { gameId, moment } = action;
+  const requestId = ++replayRequestId;
+  yield put({ type: "REQUEST_REPLAY", gameId, moment, requestId });
   yield put(updateMidsection("replay"));
 
   try {
-    const response = yield call(fetch, `/gameSummary?id=${encodeURIComponent(gameId)}`);
-    const summary = yield call([response, "json"]);
-    yield put({ type: "LOAD_REPLAY", summary, moment: action.moment });
+    const summary = yield call(fetchReplaySummary, gameId);
+    yield put({ type: "LOAD_REPLAY", summary, gameId, moment, requestId });
   } catch (err) {
-    yield put({ type: "REPLAY_NOT_FOUND" });
+    yield put({
+      type: err.kind === "not_found" ? "REPLAY_NOT_FOUND" : "REPLAY_FAILED",
+      requestId,
+      gameId,
+      error: {
+        kind: err.kind || "network",
+        message: err.kind ? err.message : "Unable to connect to the replay server. Please try again.",
+      },
+    });
   }
 }
 

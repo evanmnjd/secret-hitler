@@ -12,8 +12,8 @@ import Players from "../Players.jsx";
 import ReplayGamechat from "./ReplayGamechat.jsx";
 import ReplayOverlay from "./ReplayOverlay.jsx";
 import ReplayControls from "./ReplayControls.jsx";
-import ReplayTimeline from "./ReplayTimeline";
-import ReplayMomentLink from "./ReplayMomentLink";
+import ReplayTimeline from "./ReplayTimeline.jsx";
+import ReplayMomentLink from "./ReplayMomentLink.jsx";
 import TrackPieces from "./TrackPieces.jsx";
 import socket from "../../../socket";
 import PropTypes from "prop-types";
@@ -29,6 +29,7 @@ const mapStateToProps = ({ replay, userInfo }) => ({
 const mapDispatchToProps = (dispatch) => ({
   to: (position) => dispatch({ type: "REPLAY_TO", position }),
   exit: () => dispatch({ type: "CLOSE_REPLAY" }),
+  retry: (gameId, moment) => dispatch({ type: "FETCH_REPLAY", gameId, moment }),
 });
 
 const buildPlayback = (replay, to) => {
@@ -163,6 +164,9 @@ const Replay = ({
   allEmotes,
   hideHand: hideRolesAndHand,
   deckShown,
+  chatStatus,
+  chatError,
+  retryChat,
   actions,
 }) => {
   const { ticks, position, game } = replay;
@@ -208,9 +212,23 @@ const Replay = ({
               compact={chatsShown}
             />
             <ReplayTimeline ticks={ticks} position={position} onSeek={to} />
-            {chatsShown && (
-              <ReplayGamechat userInfo={userInfo} userList={userList} gameInfo={gameInfo} allEmotes={allEmotes} />
-            )}
+            {chatsShown &&
+              (chatStatus === "READY" ? (
+                <ReplayGamechat userInfo={userInfo} userList={userList} gameInfo={gameInfo} allEmotes={allEmotes} />
+              ) : (
+                <div className="ui message replay-chat-status" role={chatStatus === "ERROR" ? "alert" : "status"}>
+                  <p>
+                    {chatStatus === "LOADING"
+                      ? "Loading replay chat…"
+                      : chatError || "Replay chat has not been loaded."}
+                  </p>
+                  {(chatStatus === "ERROR" || chatStatus === "UNAVAILABLE") && (
+                    <button className="ui button replay-chat-retry" onClick={retryChat}>
+                      Retry chat
+                    </button>
+                  )}
+                </div>
+              ))}
           </div>
         </div>
       </div>
@@ -234,54 +252,97 @@ const Replay = ({
 export class ReplayWrapper extends React.Component {
   constructor() {
     super();
+    this.state = this.emptyData();
+    this.selectedUid = null;
+    this.requestEpoch = 0;
+    this.requestTimers = {};
+    this.mounted = false;
+  }
 
-    this.state = {
+  emptyData() {
+    return {
       chatsShown: false,
       hiddenInfoShown: true,
-      requestedData: false,
       deckShown: false,
       legacyReplay: true,
       gameData: {},
+      metadata: {},
+      metadataStatus: "INITIAL",
+      chatStatus: "INITIAL",
+      chatError: null,
     };
   }
 
   componentDidMount() {
-    socket.on("replayGameData", (gameData) => {
-      if (gameData?.uid !== this.props.replay.game?.id) return;
-      this.setState({
-        gameData,
-      });
-    });
+    this.mounted = true;
+    this.selectReplay();
   }
 
   componentWillUnmount() {
-    socket.off("replayGameData");
+    this.mounted = false;
+    this.cancelRequests();
   }
 
-  componentDidUpdate(prevProps, prevState, snapshot) {
-    switch (this.props.replay.status) {
-      case "INITIAL":
-      case "LOADING":
-        if (this.state.requestedData || Object.keys(this.state.gameData).length) {
-          this.setState({ requestedData: false, gameData: {} });
-        }
-        break;
-      case "READY":
-        if (!this.state.requestedData || prevProps.replay.game?.id !== this.props.replay.game.id) {
-          socket.emit("getReplayGameData", this.props.replay.game.id);
-          this.setState({
-            gameData: {},
-            requestedData: true,
-            legacyReplay: !(
-              this.props.replay.ticks &&
-              this.props.replay.ticks.get(0) &&
-              this.props.replay.ticks.get(0).deckState &&
-              this.props.replay.ticks.get(0).deckState.size > 0
-            ),
-          });
-        }
-        break;
-    }
+  componentDidUpdate() {
+    this.selectReplay();
+  }
+
+  cancelRequests() {
+    this.requestEpoch += 1;
+    Object.values(this.requestTimers).forEach(clearTimeout);
+    this.requestTimers = {};
+  }
+
+  selectReplay() {
+    const uid = this.props.replay.status === "READY" ? this.props.replay.game.id : null;
+    if (uid === this.selectedUid) return;
+    this.cancelRequests();
+    this.selectedUid = uid;
+    const tick = this.props.replay.ticks?.get(0);
+    this.setState({ ...this.emptyData(), legacyReplay: !(tick?.deckState?.size > 0) }, () => {
+      if (uid) this.requestData("metadata");
+    });
+  }
+
+  requestData(kind) {
+    const uid = this.selectedUid;
+    const statusKey = kind === "chat" ? "chatStatus" : "metadataStatus";
+    if (!uid || this.props.replay.status !== "READY" || this.state[statusKey] === "LOADING") return;
+    const epoch = this.requestEpoch;
+    this.setState({ [statusKey]: "LOADING", ...(kind === "chat" ? { chatError: null } : {}) });
+    let completed = false;
+    const receive = (response) => {
+      if (
+        completed ||
+        !this.mounted ||
+        epoch !== this.requestEpoch ||
+        uid !== this.selectedUid ||
+        this.props.replay.status !== "READY" ||
+        this.props.replay.game.id !== uid
+      )
+        return;
+      completed = true;
+      clearTimeout(this.requestTimers[kind]);
+      delete this.requestTimers[kind];
+      if (response?.success === true && response.uid === uid && response.data?.uid === uid) {
+        this.setState({ [kind === "chat" ? "gameData" : "metadata"]: response.data, [statusKey]: "READY" });
+      } else {
+        const unavailable = response?.uid === uid && response.code === "unavailable";
+        this.setState({
+          [statusKey]: unavailable ? "UNAVAILABLE" : "ERROR",
+          ...(kind === "chat"
+            ? {
+                chatError: unavailable
+                  ? "The board is available, but no chat archive was saved for this replay."
+                  : "Replay chat could not be loaded. Please try again.",
+              }
+            : {}),
+        });
+      }
+    };
+    this.requestTimers[kind] = setTimeout(() => receive(null), 10000);
+    // Acknowledgements belong to this request; legacy broadcast replies cannot replace another replay's data.
+    socket.emit(kind === "chat" ? "getReplayGameData" : "getReplayMetadata", uid, receive);
   }
 
   render() {
@@ -290,8 +351,10 @@ export class ReplayWrapper extends React.Component {
       this.props.exit();
     };
     const toggleChats = () => {
-      this.setState({
-        chatsShown: !this.state.chatsShown,
+      if (this.props.replay.status !== "READY") return;
+      const chatsShown = !this.state.chatsShown;
+      this.setState({ chatsShown }, () => {
+        if (chatsShown && this.state.chatStatus === "INITIAL") this.requestData("chat");
       });
     };
 
@@ -321,7 +384,11 @@ export class ReplayWrapper extends React.Component {
         <button className="displayroles ui inverted purple button" onClick={toggleHiddenInfo}>
           {this.state.hiddenInfoShown ? "Hide roles/hands" : "Show roles/hands"}
         </button>
-        <button className="displaychats ui inverted blue button" onClick={toggleChats}>
+        <button
+          className="displaychats ui inverted blue button"
+          onClick={toggleChats}
+          disabled={this.props.replay.status !== "READY"}
+        >
           {this.state.chatsShown ? "Hide chats" : "Show chats"}
           {(this.state.gameData.chats || []).some(isReplayWhisper) && (
             <span className="replay-whisper-count">
@@ -352,19 +419,27 @@ export class ReplayWrapper extends React.Component {
             </div>
           );
         case "NOT_FOUND":
-          return (
-            <h1 className="not-found ui icon center aligned header">
-              <i className="settings icon" />
-              <div className="content">Replay not found</div>
-            </h1>
-          );
         case "ERROR":
           return (
-            <div className="replay-error" role="alert">
-              <h2>Unable to open this replay moment</h2>
-              <p>{this.props.replay.error?.message || "The replay link is invalid."}</p>
+            <div className="ui message replay-load-error" role="alert">
+              <h2>{this.props.replay.status === "NOT_FOUND" ? "Replay not found" : "Unable to load replay"}</h2>
+              <p>
+                {this.props.replay.status === "NOT_FOUND"
+                  ? "This replay may not have been saved or may no longer be available."
+                  : this.props.replay.error?.message || "Please try loading this replay again."}
+              </p>
+              {this.props.replay.error?.kind === "moment" && this.props.replay.gameId && (
+                <p>
+                  <a href={`#/replay/${encodeURIComponent(this.props.replay.gameId)}`}>Open replay from beginning</a>
+                </p>
+              )}
               {this.props.replay.gameId && (
-                <a href={`#/replay/${encodeURIComponent(this.props.replay.gameId)}`}>Open replay from beginning</a>
+                <button
+                  className="ui button replay-retry"
+                  onClick={() => this.props.retry(this.props.replay.gameId, this.props.replay.moment)}
+                >
+                  Retry replay
+                </button>
               )}
             </div>
           );
@@ -374,7 +449,14 @@ export class ReplayWrapper extends React.Component {
               replay={this.props.replay}
               isSmall={this.props.isSmall}
               userInfo={this.props.userInfo}
-              gameData={this.state.gameData}
+              gameData={{
+                ...this.props.replay.game.summary.gameSetting,
+                ...this.state.metadata,
+                ...this.state.gameData,
+              }}
+              chatStatus={this.state.chatStatus}
+              chatError={this.state.chatError}
+              retryChat={() => this.requestData("chat")}
               chatsShown={this.state.chatsShown}
               userList={this.props.userList}
               to={this.props.to}
@@ -390,6 +472,14 @@ export class ReplayWrapper extends React.Component {
     return (
       <section id="replay" className="ui segment">
         {this.props.replay.status !== "READY" && actions}
+        {this.props.replay.status === "READY" && ["ERROR", "UNAVAILABLE"].includes(this.state.metadataStatus) && (
+          <div className="ui message replay-metadata-status" role="status">
+            Table details could not be loaded. The replay board is still available.{" "}
+            <button className="ui button replay-metadata-retry" onClick={() => this.requestData("metadata")}>
+              Retry details
+            </button>
+          </div>
+        )}
         {children}
       </section>
     );

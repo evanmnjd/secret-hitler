@@ -383,13 +383,14 @@ module.exports = () => {
 
   app.get("/gameSummary", (req, res) => {
     const parsed = idQuerySchema.safeParse(req.query);
-    if (!parsed.success) {
+    if (!parsed.success || parsed.data.id.length < 1 || parsed.data.id.length > 200) {
       res.status(404).send("Game summary not found");
       return;
     }
     const id = parsed.data.id;
 
     GameSummary.findById(id)
+      .maxTimeMS(3000)
       .lean()
       .exec()
       .then((gs) => {
@@ -400,9 +401,12 @@ module.exports = () => {
         }
       })
       .catch((err) => {
-        // malformed id (e.g. ?id=abc) → findById CastError; respond instead of hanging the request
+        if (err.name === "CastError") {
+          res.status(404).send("Game summary not found");
+          return;
+        }
         console.debug(err);
-        res.status(404).send("Game summary not found");
+        res.status(503).send("Unable to load game summary right now");
       });
   });
 
