@@ -16,21 +16,26 @@ const {
  * @param {object} data - from socket emit.
  */
 module.exports.handleUpdatedTheme = (socket, passport, data) => {
+  if (typeof passport?.user !== "string" || !passport.user) return;
   const parsed = themeSchema.safeParse(data);
   if (!parsed.success) return;
   data = parsed.data; // field + colour fields guaranteed to be strings when present
 
-  Account.findOne({ username: passport && passport.user }).then((account) => {
-    if (!account) {
-      return;
-    }
+  return Account.findOne({ username: passport.user })
+    .then(async (account) => {
+      if (!account) {
+        return;
+      }
 
-    for (const field of THEME_COLOR_FIELDS) {
-      if (data[field]) account[field] = data[field];
-    }
+      for (const field of THEME_COLOR_FIELDS) {
+        if (data[field]) account[field] = data[field];
+      }
 
-    account.save();
-  });
+      await account.save();
+    })
+    .catch((error) => {
+      console.warn("Theme update failed:", error?.name || "Error");
+    });
 };
 
 /**

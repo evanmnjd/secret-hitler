@@ -379,7 +379,9 @@ module.exports.socketRoutes = () => {
           socket.emit("touChange", [TOU_CHANGES[TOU_CHANGES.length - 1]]);
           return true;
         }
-        const warnings = account.warnings.filter((warning) => !warning.acknowledged);
+        const warnings = (Array.isArray(account.warnings) ? account.warnings : []).filter(
+          (warning) => !warning.acknowledged
+        );
         if (warnings.length > 0) {
           const { moderator, acknowledged, ...firstWarning } = warnings[0]; // eslint-disable-line no-unused-vars
           socket.emit("warningPopup", firstWarning);
@@ -397,27 +399,61 @@ module.exports.socketRoutes = () => {
         });
       }
 
-      socket.on("receiveRestrictions", () => {
-        Account.findOne({ username: passport.user }).then((account) => {
-          isRestricted = checkRestriction(account);
-        });
-      });
+      const accountRequestFailed = (error) => {
+        console.warn("Account request failed:", error?.name || "Error");
+        if (!socket.disconnected && !socket._replacedBySocketId) {
+          socket.emit("sendAlert", "Unable to complete this account request. Please try again.");
+        }
+      };
+      const loadCurrentAccount = async () => {
+        if (!ensureAuthenticated(socket) || socket.disconnected || socket._replacedBySocketId) return null;
+        const username = socket.handshake.session.passport.user;
+        if (typeof username !== "string" || !username) return null;
+        const account = await Account.findOne({ username });
+        if (socket.disconnected || socket._replacedBySocketId || socket.handshake.session.passport?.user !== username)
+          return null;
+        return account;
+      };
+      const restrictionRequests = new Set();
+      let restrictionRevision = 0;
+      const updateRestrictions = async (kind, change) => {
+        if (restrictionRequests.has(kind)) return;
+        restrictionRequests.add(kind);
+        const revision = ++restrictionRevision;
+        try {
+          const account = await loadCurrentAccount();
+          if (!account) return;
+          if (change) await change(account);
+          if (revision === restrictionRevision && !socket.disconnected && !socket._replacedBySocketId) {
+            isRestricted = checkRestriction(account);
+          }
+        } catch (error) {
+          accountRequestFailed(error);
+        } finally {
+          restrictionRequests.delete(kind);
+        }
+      };
 
-      socket.on("seeWarnings", (username) => {
-        if (isAEM) {
-          Account.findOne({ username: username }).then((account) => {
-            if (account) {
-              if (account.warnings && account.warnings.length > 0) {
-                socket.emit("sendWarnings", { username, warnings: account.warnings });
-              } else {
-                socket.emit("sendAlert", `That user doesn't have any warnings.`);
-              }
-            } else {
-              socket.emit("sendAlert", `That user doesn't exist.`);
-            }
-          });
-        } else {
-          socket.emit("sendAlert", `Are you sure you're supposed to be doing that?`);
+      socket.on("receiveRestrictions", () => updateRestrictions("refresh"));
+
+      socket.on("seeWarnings", async (username) => {
+        if (!authenticated || !isAEM) {
+          socket.emit("sendAlert", "Are you sure you're supposed to be doing that?");
+          return;
+        }
+        if (typeof username !== "string" || !username || username.length > 64) return;
+        try {
+          const current = await loadCurrentAccount();
+          if (!["moderator", "editor", "admin"].includes(current?.staffRole)) return;
+          const account = await Account.findOne({ username });
+          if (socket.disconnected || socket._replacedBySocketId) return;
+          if (account?.warnings?.length) {
+            socket.emit("sendWarnings", { username, warnings: account.warnings });
+          } else {
+            socket.emit("sendAlert", account ? "That user doesn't have any warnings." : "That user doesn't exist.");
+          }
+        } catch (error) {
+          accountRequestFailed(error);
         }
       });
 
@@ -432,73 +468,78 @@ module.exports.socketRoutes = () => {
           return;
         }
 
-        if (!(data && data.feedback)) {
+        if (typeof data?.feedback !== "string" || !data.feedback.trim()) {
           socket.emit("feedbackResponse", { status: "error", message: "You cannot submit empty feedback." });
           return;
         }
 
-        if (typeof data.feedback === "object") {
-          return;
-        }
-
         if (data.feedback.length <= 1900) {
-          Account.findOne({ username: passport.user }).then((account) => {
-            if (!account.feedbackSubmissions) account.feedbackSubmissions = [];
-            const newFeedback = {
-              date: new Date(),
-              feedback: data.feedback,
-            };
+          return loadCurrentAccount()
+            .then(async (account) => {
+              if (!account) return;
+              if (!account.feedbackSubmissions) account.feedbackSubmissions = [];
+              const newFeedback = {
+                date: new Date(),
+                feedback: data.feedback,
+              };
 
-            if (account.feedbackSubmissions.length >= 2) {
-              const secondMostRecentIndex = account.feedbackSubmissions.length - 2;
-              if (newFeedback.date - account.feedbackSubmissions[secondMostRecentIndex].date > 1000 * 60 * 60 * 24) {
-                // if it's been 24 hours since the *2nd* most recent feedback submission
-                account.feedbackSubmissions.push(newFeedback);
+              if (account.feedbackSubmissions.length >= 2) {
+                const secondMostRecentIndex = account.feedbackSubmissions.length - 2;
+                if (newFeedback.date - account.feedbackSubmissions[secondMostRecentIndex].date > 1000 * 60 * 60 * 24) {
+                  // if it's been 24 hours since the *2nd* most recent feedback submission
+                  account.feedbackSubmissions.push(newFeedback);
+                } else {
+                  socket.emit("feedbackResponse", {
+                    status: "error",
+                    message:
+                      "You can only submit feedback twice a day. You can submit feedback again in " +
+                      moment
+                        .duration(
+                          24 * 60 * 60 * 1000 -
+                            (newFeedback.date - account.feedbackSubmissions[secondMostRecentIndex].date)
+                        )
+                        .humanize() +
+                      ".",
+                  });
+                  return;
+                }
               } else {
-                socket.emit("feedbackResponse", {
-                  status: "error",
-                  message:
-                    "You can only submit feedback twice a day. You can submit feedback again in " +
-                    moment
-                      .duration(
-                        24 * 60 * 60 * 1000 -
-                          (newFeedback.date - account.feedbackSubmissions[secondMostRecentIndex].date)
-                      )
-                      .humanize() +
-                    ".",
-                });
-                return;
+                account.feedbackSubmissions.push(newFeedback);
               }
-            } else {
-              account.feedbackSubmissions.push(newFeedback);
-            }
 
-            let feedback = {
-              content: `__**Player**__: ${passport.user}\n__**Feedback**__: ${data.feedback}`,
-              username: "Feedback",
-              allowed_mentions: { parse: [] },
-            };
+              let feedback = {
+                content: `__**Player**__: ${passport.user}\n__**Feedback**__: ${data.feedback}`,
+                username: "Feedback",
+                allowed_mentions: { parse: [] },
+              };
 
-            try {
-              feedback = JSON.stringify(feedback);
-              const req = https.request({
-                hostname: "discordapp.com",
-                path: process.env.DISCORDFEEDBACKURL,
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Content-Length": Buffer.byteLength(feedback),
-                },
-              });
-              req.end(feedback);
-              socket.emit("feedbackResponse", { status: "success", message: "Thank you for submitting feedback!" });
-            } catch (e) {
-              console.log(e);
-              socket.emit("feedbackResponse", { status: "error", message: "An unknown error occurred." });
-            }
+              try {
+                feedback = JSON.stringify(feedback);
+                const req = https.request({
+                  hostname: "discordapp.com",
+                  path: process.env.DISCORDFEEDBACKURL,
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Content-Length": Buffer.byteLength(feedback),
+                  },
+                });
+                req.on("error", () =>
+                  socket.emit("feedbackResponse", {
+                    status: "error",
+                    message: "Feedback could not be sent. Please try again.",
+                  })
+                );
+                req.end(feedback);
+                socket.emit("feedbackResponse", { status: "success", message: "Thank you for submitting feedback!" });
+              } catch (e) {
+                console.log(e);
+                socket.emit("feedbackResponse", { status: "error", message: "An unknown error occurred." });
+              }
 
-            account.save();
-          });
+              await account.save();
+            })
+            .catch(accountRequestFailed);
         } else {
           socket.emit("feedbackResponse", { status: "error", message: "Your feedback is too long." });
         }
@@ -568,27 +609,26 @@ module.exports.socketRoutes = () => {
       });
 
       socket.on("confirmTOU", () => {
-        if (authenticated && isRestricted) {
-          Account.findOne({ username: passport.user }).then((account) => {
-            account.touLastAgreed = TOU_CHANGES[0].changeVer;
-            account.save();
-            isRestricted = checkRestriction(account);
-          });
-        }
+        if (!authenticated || !isRestricted) return;
+        return updateRestrictions("terms", async (account) => {
+          account.touLastAgreed = TOU_CHANGES[0].changeVer;
+          await account.save();
+        });
       });
 
       socket.on("acknowledgeWarning", () => {
-        if (authenticated && isRestricted) {
-          Account.findOne({ username: passport.user }).then((acc) => {
-            acc.warnings[acc.warnings.findIndex((warning) => !warning.acknowledged)].acknowledged = true;
-            acc.markModified("warnings");
-            acc.save(() => (isRestricted = checkRestriction(acc)));
-          });
-        }
+        if (!authenticated || !isRestricted) return;
+        return updateRestrictions("warning", async (account) => {
+          const warning = account.warnings?.find((entry) => !entry.acknowledged);
+          if (!warning) return;
+          warning.acknowledged = true;
+          account.markModified("warnings");
+          await account.save();
+        });
       });
 
       socket.on("handleUpdatedTheme", (data) => {
-        handleUpdatedTheme(socket, passport, data);
+        if (authenticated) return handleUpdatedTheme(socket, passport, data);
       });
 
       socket.on("updateModAction", (data) => {
