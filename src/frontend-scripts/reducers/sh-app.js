@@ -127,12 +127,14 @@ const replay = (state = { status: "INITIAL" }, action) => {
       return { status: "LOADING" };
     case "REPLAY_NOT_FOUND":
       return { status: "NOT_FOUND" };
+    case "REPLAY_FAILED":
+      return { status: "ERROR", error: action.error, gameId: action.gameId };
     case "RECEIVE_REPLAY":
       return {
         status: "READY",
         ticks: action.replay,
         game: action.game,
-        position: 0,
+        position: action.position ?? 0,
       };
     case "REPLAY_TO":
       return Object.assign({}, state, {

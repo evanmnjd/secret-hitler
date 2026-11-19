@@ -156,9 +156,17 @@ it("keeps display actions beside the loaded board and usable while viewing saved
 
   view().find(".displaychats").simulate("click");
   expect(view().find(ReplayGamechat).prop("gameInfo").chats).toEqual([{ chat: "Saved chat" }]);
+  expect(view().find("ReplayControls").prop("compact")).toBe(true);
+  expect(view().find("ReplayTimeline")).toHaveLength(1);
+  const compact = view().find("ReplayControls").dive();
+  expect(compact.find("Playback").dive().find("button")).toHaveLength(6);
+  expect(compact.find("TurnNav")).toHaveLength(0);
+  expect(compact.find("PhaseNav")).toHaveLength(0);
   expect(view().find(".right-side > .replay-actions button")).toHaveLength(4);
+  expect(view().find("ReplayMomentLink")).toHaveLength(1);
   view().find(".displaychats").simulate("click");
   expect(view().find("ReplayControls")).toHaveLength(1);
+  expect(view().find("ReplayControls").prop("compact")).toBe(false);
   view().find(".exit").simulate("click");
   expect(window.location.hash).toBe("#/");
   expect(exit).toHaveBeenCalledTimes(1);

@@ -12,6 +12,8 @@ import Players from "../Players.jsx";
 import ReplayGamechat from "./ReplayGamechat.jsx";
 import ReplayOverlay from "./ReplayOverlay.jsx";
 import ReplayControls from "./ReplayControls.jsx";
+import ReplayTimeline from "./ReplayTimeline";
+import ReplayMomentLink from "./ReplayMomentLink";
 import TrackPieces from "./TrackPieces.jsx";
 import socket from "../../../socket";
 import PropTypes from "prop-types";
@@ -194,19 +196,20 @@ const Replay = ({
           </div>
           <div className="right-side">
             {actions}
-            {chatsShown ? (
+            <ReplayControls
+              turnsSize={ticks.last().turnNum + 1}
+              turnNum={snapshot.turnNum}
+              phase={phase}
+              description={description}
+              playback={playback}
+              deck={snapshot.deckState}
+              deckShown={deckShown}
+              userInfo={userInfo}
+              compact={chatsShown}
+            />
+            <ReplayTimeline ticks={ticks} position={position} onSeek={to} />
+            {chatsShown && (
               <ReplayGamechat userInfo={userInfo} userList={userList} gameInfo={gameInfo} allEmotes={allEmotes} />
-            ) : (
-              <ReplayControls
-                turnsSize={ticks.last().turnNum + 1}
-                turnNum={snapshot.turnNum}
-                phase={phase}
-                description={description}
-                playback={playback}
-                deck={snapshot.deckState}
-                deckShown={deckShown}
-                userInfo={userInfo}
-              />
             )}
           </div>
         </div>
@@ -330,6 +333,12 @@ export class ReplayWrapper extends React.Component {
           <i className="sign out icon" />
           Exit Replay
         </button>
+        {this.props.replay.status === "READY" && (
+          <ReplayMomentLink
+            uid={this.props.replay.game.id}
+            snapshot={this.props.replay.ticks.get(this.props.replay.position)}
+          />
+        )}
       </div>
     );
 
@@ -348,6 +357,16 @@ export class ReplayWrapper extends React.Component {
               <i className="settings icon" />
               <div className="content">Replay not found</div>
             </h1>
+          );
+        case "ERROR":
+          return (
+            <div className="replay-error" role="alert">
+              <h2>Unable to open this replay moment</h2>
+              <p>{this.props.replay.error?.message || "The replay link is invalid."}</p>
+              {this.props.replay.gameId && (
+                <a href={`#/replay/${encodeURIComponent(this.props.replay.gameId)}`}>Open replay from beginning</a>
+              )}
+            </div>
           );
         case "READY":
           return (
