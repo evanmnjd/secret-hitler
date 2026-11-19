@@ -1,7 +1,7 @@
 # Replay moment previews
 
 Moment links use `/replay/<game UID>?turn=<government number>&phase=<phase>`. The
-playback controls branch creates these links. An `end=1` parameter distinguishes
+playback controls included on `replay-playback-timeline` create these links. An `end=1` parameter distinguishes
 the final result from the preceding action when they share a phase.
 
 The HTTP page includes Open Graph metadata and a 1200 × 630 PNG of the public
