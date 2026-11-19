@@ -119,20 +119,30 @@ const version = (state = { current: { number: "", color: "", date: "" }, lastSee
   }
 };
 
-const replay = (state = { status: "INITIAL" }, action) => {
+export const replay = (state = { status: "INITIAL" }, action) => {
+  if (
+    ["REPLAY_NOT_FOUND", "REPLAY_FAILED", "RECEIVE_REPLAY"].includes(action.type) &&
+    action.requestId !== undefined &&
+    action.requestId !== state.requestId
+  ) {
+    return state;
+  }
   switch (action.type) {
     case "CLEAR_REPLAY":
       return { status: "INITIAL" };
     case "REQUEST_REPLAY":
-      return { status: "LOADING" };
+      return { status: "LOADING", gameId: action.gameId, moment: action.moment, requestId: action.requestId };
     case "REPLAY_NOT_FOUND":
-      return { status: "NOT_FOUND" };
+      return { ...state, status: "NOT_FOUND" };
+    case "REPLAY_FAILED":
+      return { ...state, status: "ERROR", error: action.error, gameId: action.gameId || state.gameId };
     case "RECEIVE_REPLAY":
       return {
+        ...state,
         status: "READY",
         ticks: action.replay,
         game: action.game,
-        position: 0,
+        position: action.position ?? 0,
       };
     case "REPLAY_TO":
       return Object.assign({}, state, {

@@ -19,7 +19,7 @@ const PlayerReport = require("../../../../models/playerReport");
 const { games } = require("../../../../routes/socket/models");
 const { sendInProgressGameUpdate } = require("../../../../routes/socket/util");
 const { replayForViewer } = require("../../../../routes/socket/neighbor-chat");
-const { sendReplayGameData, sendUserReports } = require("../../../../routes/socket/user-requests");
+const { sendReplayGameData, sendReplayMetadata, sendUserReports } = require("../../../../routes/socket/user-requests");
 const {
   handleMuteNeighborChat,
   handleReportNeighborChat,
@@ -27,6 +27,7 @@ const {
 
 const query = (value) => ({
   select: jest.fn().mockReturnThis(),
+  maxTimeMS: jest.fn().mockReturnThis(),
   sort: jest.fn().mockReturnThis(),
   limit: jest.fn().mockReturnThis(),
   lean: jest.fn().mockResolvedValue(value),
@@ -197,12 +198,170 @@ describe("replay transcripts and export privacy", () => {
 
   it("fails closed when the account lookup fails", async () => {
     const log = jest.spyOn(console, "log").mockImplementation(() => {});
-    Account.findOne.mockReturnValue({ select: () => ({ lean: () => Promise.reject(new Error("offline")) }) });
+    const accountQuery = query(null);
+    accountQuery.lean.mockRejectedValue(new Error("offline"));
+    Account.findOne.mockReturnValue(accountQuery);
     const socket = makeSocket("Bob");
     await expect(sendReplayGameData(socket, "table")).resolves.toBeUndefined();
     expect(socket.emit).toHaveBeenCalledWith("sendAlert", expect.any(String));
     expect(socket.emit).not.toHaveBeenCalledWith("replayGameData", expect.anything());
     log.mockRestore();
+  });
+});
+
+describe("replay request acknowledgements", () => {
+  it("returns filtered chat in an acknowledgement without broadcasting the legacy event", async () => {
+    const socket = makeSocket("Stranger");
+    const callback = jest.fn();
+    await sendReplayGameData(socket, "table", callback);
+    expect(callback).toHaveBeenCalledWith({
+      success: true,
+      uid: "table",
+      data: {
+        uid: "table",
+        chats: [archive.chats[0], incoming, outgoing, unrelated],
+      },
+    });
+    expect(socket.emit).not.toHaveBeenCalled();
+    expect(Game.findOne().select).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: 0,
+        uid: 1,
+        chats: 1,
+        neighborChats: 1,
+        hiddenInfoChat: 1,
+      })
+    );
+    expect(Game.findOne().select.mock.calls[0][0]).not.toHaveProperty("guesses");
+    expect(Game.findOne().maxTimeMS).toHaveBeenCalledWith(3000);
+    expect(Account.findOne().maxTimeMS).toHaveBeenCalledWith(3000);
+  });
+
+  it("loads only public metadata without querying account authorization or exposing archive fields", async () => {
+    Object.assign(archive, {
+      name: "Neighbors",
+      playerChats: "silent",
+      neighborChat: true,
+      guesses: { Bob: "Hitler" },
+    });
+    const callback = jest.fn();
+    const socket = makeSocket("Bob");
+    await sendReplayMetadata(socket, "table", callback);
+    expect(callback).toHaveBeenCalledWith({
+      success: true,
+      uid: "table",
+      data: {
+        uid: "table",
+        name: "Neighbors",
+        playerChats: "silent",
+        neighborChat: true,
+      },
+    });
+    expect(Account.findOne).not.toHaveBeenCalled();
+    const projection = Game.findOne().select.mock.calls[0][0];
+    for (const field of ["chats", "neighborChats", "hiddenInfoChat", "guesses", "winningPlayers", "losingPlayers"])
+      expect(projection).not.toHaveProperty(field);
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    undefined,
+    { uid: "table" },
+  ])("reports missing or legacy transcript archives as unavailable (%j)", async (value) => {
+    Game.findOne.mockReturnValue(query(value));
+    const callback = jest.fn();
+    await sendReplayGameData(makeSocket(), "table", callback);
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, uid: "table", code: "unavailable" })
+    );
+  });
+
+  it("distinguishes an intentionally empty transcript from a missing archive", async () => {
+    Game.findOne.mockReturnValue(query({ uid: "table", chats: [] }));
+    const callback = jest.fn();
+    await sendReplayGameData(makeSocket(), "table", callback);
+    expect(callback).toHaveBeenCalledWith({ success: true, uid: "table", data: { uid: "table", chats: [] } });
+  });
+
+  it.each([
+    "table?x=1",
+    "../table",
+    "a".repeat(201),
+    {},
+    [],
+  ])("rejects invalid IDs before querying (%j)", async (uid) => {
+    const callback = jest.fn();
+    await sendReplayGameData(makeSocket(), uid, callback);
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "invalid" }));
+    expect(Game.findOne).not.toHaveBeenCalled();
+  });
+
+  it("checks for a running game again after authorization resolves", async () => {
+    let authorize;
+    const accountQuery = query(null);
+    accountQuery.lean.mockReturnValue(
+      new Promise((resolve) => {
+        authorize = resolve;
+      })
+    );
+    Account.findOne.mockReturnValue(accountQuery);
+    const callback = jest.fn();
+    const loading = sendReplayGameData(makeSocket("Reviewer"), "table", callback);
+    await Promise.resolve();
+    games.table = { gameState: { isCompleted: false } };
+    authorize({ username: "Reviewer", staffRole: "admin" });
+    await loading;
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "unavailable" }));
+  });
+
+  it("does not return a privileged response after the socket identity changes", async () => {
+    let authorize;
+    const accountQuery = query(null);
+    accountQuery.lean.mockReturnValue(
+      new Promise((resolve) => {
+        authorize = resolve;
+      })
+    );
+    Account.findOne.mockReturnValue(accountQuery);
+    const socket = makeSocket("Reviewer");
+    const callback = jest.fn();
+    const loading = sendReplayGameData(socket, "table", callback);
+    await Promise.resolve();
+    socket.handshake.session.passport.user = "Stranger";
+    authorize({ username: "Reviewer", staffRole: "admin" });
+    await loading;
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "unavailable" }));
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  it("bounds duplicate reads and reports a timeout without releasing an unsettled database request", async () => {
+    jest.useFakeTimers();
+    let finish;
+    const gameQuery = query(null);
+    gameQuery.lean.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    Game.findOne.mockReturnValue(gameQuery);
+    const socket = makeSocket();
+    const callback = jest.fn();
+    const loading = sendReplayGameData(socket, "table", callback);
+    const duplicate = jest.fn();
+    await sendReplayGameData(socket, "table", duplicate);
+    expect(duplicate).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "busy" }));
+    jest.advanceTimersByTime(8000);
+    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ success: false, code: "failed" }));
+    await sendReplayGameData(socket, "table", duplicate);
+    expect(Game.findOne).toHaveBeenCalledTimes(1);
+    finish(archive);
+    await loading;
+    expect(callback).toHaveBeenCalledTimes(1);
+    Game.findOne.mockReturnValue(query(archive));
+    const retry = jest.fn();
+    await sendReplayGameData(socket, "table", retry);
+    expect(retry).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+    jest.useRealTimers();
   });
 });
 

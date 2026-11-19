@@ -163,49 +163,115 @@ describe("replay chat switching", () => {
     const game = buildEnhancedGameSummary({ ...fixture, _id: id });
     return { status: "READY", game, ticks: buildReplay(game), position: 0 };
   };
-
-  it("opens the chat panel even when no archived messages are available", () => {
-    const wrapper = shallow(<ReplayWrapper replay={ready()} userInfo={{}} userList={{ list: [] }} to={jest.fn()} />, {
+  let emit;
+  let replies;
+  const renderReplay = (id = "first") => {
+    const wrapper = shallow(<ReplayWrapper replay={ready(id)} userInfo={{}} userList={{ list: [] }} to={jest.fn()} />, {
       disableLifecycleMethods: true,
     });
-    wrapper.find(".displaychats").simulate("click");
-    expect(wrapper.find("Replay").dive().find(ConnectedReplayGamechat)).toHaveLength(1);
-    expect(wrapper.find("Replay").dive().find("ReplayControls")).toHaveLength(0);
-  });
-
-  it("advertises the full archived whisper count", () => {
-    const wrapper = shallow(<ReplayWrapper replay={{ status: "LOADING" }} />, { disableLifecycleMethods: true });
-    wrapper.setState({ gameData: replayForViewer(archive(), "Bob", false, { includeAllNeighborChats: true }) });
-    expect(wrapper.find(".displaychats").text()).toBe("Show chats · 3 whispers");
-  });
-
-  it("rejects delayed transcript replies for a different replay and clears old chat when switching", () => {
-    let receive;
-    const on = jest.spyOn(socket, "on").mockImplementation((event, handler) => {
-      if (event === "replayGameData") receive = handler;
+    wrapper.instance().componentDidMount();
+    return wrapper;
+  };
+  const receive = (event, uid, data) =>
+    replies
+      .find((request) => request.event === event && request.uid === uid)
+      .callback({
+        success: true,
+        uid,
+        data: { uid, ...data },
+      });
+  beforeEach(() => {
+    jest.useFakeTimers();
+    replies = [];
+    emit = jest.spyOn(socket, "emit").mockImplementation((event, uid, callback) => {
+      replies.push({ event, uid, callback });
     });
-    const emit = jest.spyOn(socket, "emit").mockImplementation(() => {});
-    const off = jest.spyOn(socket, "off").mockImplementation(() => {});
-    try {
-      const wrapper = shallow(<ReplayWrapper replay={ready("first")} />, { disableLifecycleMethods: true });
-      wrapper.instance().componentDidMount();
-      receive({ uid: "first", chats: [{ chat: "First replay" }] });
-      receive({ uid: "other", chats: [{ chat: "Wrong replay" }] });
-      expect(wrapper.state("gameData").chats).toEqual([{ chat: "First replay" }]);
-      const previous = wrapper.instance().props;
-      wrapper.setProps({ replay: ready("second") });
-      wrapper.instance().componentDidUpdate(previous);
-      expect(wrapper.state("gameData")).toEqual({});
-      expect(emit).toHaveBeenCalledWith("getReplayGameData", "second");
-      receive({ uid: "first", chats: [{ chat: "Delayed first replay" }] });
-      expect(wrapper.state("gameData")).toEqual({});
-      receive({ uid: "second", chats: [{ chat: "Second replay" }] });
-      expect(wrapper.state("gameData").chats).toEqual([{ chat: "Second replay" }]);
-      wrapper.unmount();
-    } finally {
-      on.mockRestore();
-      emit.mockRestore();
-      off.mockRestore();
-    }
+  });
+  afterEach(() => {
+    emit.mockRestore();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it("loads table metadata up front, and loads chat only on first opening", () => {
+    const wrapper = renderReplay();
+    expect(emit.mock.calls.map((call) => call[0])).toEqual(["getReplayMetadata"]);
+    receive("getReplayMetadata", "first", { name: "Neighbor table", neighborChat: true });
+    expect(wrapper.find("Replay").prop("gameData")).toMatchObject({ name: "Neighbor table", neighborChat: true });
+    wrapper.find(".displaychats").simulate("click");
+    expect(wrapper.state("chatStatus")).toBe("LOADING");
+    expect(wrapper.find("Replay").dive().find(".replay-chat-status").text()).toContain("Loading replay chat");
+    receive("getReplayGameData", "first", { chats: [] });
+    expect(wrapper.find("Replay").dive().find(ConnectedReplayGamechat)).toHaveLength(1);
+    wrapper.find(".displaychats").simulate("click");
+    wrapper.find(".displaychats").simulate("click");
+    expect(emit.mock.calls.filter((call) => call[0] === "getReplayGameData")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("advertises the loaded whisper count", () => {
+    const wrapper = renderReplay("table");
+    wrapper.find(".displaychats").simulate("click");
+    receive("getReplayGameData", "table", replayForViewer(archive(), "Bob", false, { includeAllNeighborChats: true }));
+    expect(wrapper.find(".displaychats").text()).toBe("Hide chats · 3 whispers");
+    wrapper.unmount();
+  });
+
+  it("rejects delayed acknowledgements and legacy broadcasts when switching replays", () => {
+    const on = jest.spyOn(socket, "on");
+    const wrapper = renderReplay();
+    wrapper.find(".displaychats").simulate("click");
+    wrapper.setProps({ replay: ready("second") });
+    wrapper.instance().componentDidUpdate();
+    receive("getReplayGameData", "first", { chats: [{ chat: "Delayed first replay" }] });
+    receive("getReplayMetadata", "first", { name: "Wrong table" });
+    expect(wrapper.state("gameData")).toEqual({});
+    expect(wrapper.state("metadata")).toEqual({});
+    expect(wrapper.state("chatsShown")).toBe(false);
+    expect(wrapper.state("chatStatus")).toBe("INITIAL");
+    expect(emit.mock.calls.filter((call) => call[0] === "getReplayGameData")).toHaveLength(1);
+    expect(on).not.toHaveBeenCalledWith("replayGameData", expect.any(Function));
+    wrapper.find(".displaychats").simulate("click");
+    receive("getReplayGameData", "second", { chats: [{ chat: "Second replay" }] });
+    expect(wrapper.state("gameData").chats).toEqual([{ chat: "Second replay" }]);
+    wrapper.unmount();
+    on.mockRestore();
+  });
+
+  it("distinguishes a missing transcript from empty chat and retries timed-out requests", () => {
+    const wrapper = renderReplay();
+    wrapper.find(".displaychats").simulate("click");
+    const first = replies.find((request) => request.event === "getReplayGameData");
+    first.callback({ success: false, uid: "first", code: "unavailable" });
+    expect(wrapper.state("chatStatus")).toBe("UNAVAILABLE");
+    expect(wrapper.find("Replay").dive().find(".replay-chat-status").text()).toContain("no chat archive was saved");
+    wrapper.find("Replay").dive().find(".replay-chat-retry").simulate("click");
+    jest.advanceTimersByTime(10000);
+    expect(wrapper.state("chatStatus")).toBe("ERROR");
+    expect(wrapper.find("Replay").dive().find(".replay-chat-status").text()).toContain("could not be loaded");
+    const timedOut = replies.filter((request) => request.event === "getReplayGameData")[1];
+    timedOut.callback({ success: true, uid: "first", data: { uid: "first", chats: [{ chat: "Too late" }] } });
+    expect(wrapper.state("chatStatus")).toBe("ERROR");
+    wrapper.find("Replay").dive().find(".replay-chat-retry").simulate("click");
+    replies
+      .filter((request) => request.event === "getReplayGameData")[2]
+      .callback({ success: true, uid: "first", data: { uid: "first", chats: [] } });
+    expect(wrapper.state("chatStatus")).toBe("READY");
+    wrapper.unmount();
+  });
+
+  it("shows a board error and retries the same requested moment", () => {
+    const retry = jest.fn();
+    const moment = { turn: 2, phase: "election" };
+    const wrapper = shallow(
+      <ReplayWrapper
+        replay={{ status: "ERROR", gameId: "first", moment, error: { message: "Server unavailable" } }}
+        retry={retry}
+      />,
+      { disableLifecycleMethods: true }
+    );
+    expect(wrapper.find(".replay-load-error").text()).toContain("Server unavailable");
+    wrapper.find(".replay-retry").simulate("click");
+    expect(retry).toHaveBeenCalledWith("first", moment);
   });
 });
