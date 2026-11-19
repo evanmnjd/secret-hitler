@@ -668,13 +668,13 @@ describe("empty lobby cleanup across lobby types", () => {
     const game = humanLobby("private");
     const socket = await joinGrey(game);
     const error = new Error("Mongo temporarily unavailable during teardown");
-    const log = jest.spyOn(console, "log").mockImplementation(() => {});
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
     Game.findOne.mockRejectedValueOnce(error);
     leave(socket, game);
     await settle();
     expect(models.games[game.general.uid]).toBe(game);
     expect(game.isBeingTornDown).toBe(false);
-    expect(log).toHaveBeenCalledWith(error, "err in saveOrUpdateGame");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("retained for retry"));
     socketRoutes();
     jest.advanceTimersByTime(30000);
     await settle();
