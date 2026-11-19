@@ -8,7 +8,7 @@ The timeline contains every government, including failed elections, followed by 
 
 Existing `#/replay/table-id` links still open at the beginning. A moment hash such as `/game/#/replay/table-id?turn=3&phase=investigation` opens at its exact saved snapshot. Invalid or unavailable moments show an error and a link to restart from the beginning when the replay ID is known. They never silently select a different moment.
 
-The public `/replay/:uid` landing route and Discord thumbnail are supplied by the companion `replay-moment-previews` branch. Merge that branch alongside this one to make copied public URLs available. This UI uses the same shared moment parser as that route. Neither the timeline nor moment links change archived data or expose unfinished games. Public-only chat remains the default; replay whisper visibility controls are unchanged.
+This branch includes the public `/replay/:uid` landing route and Discord thumbnail so copied URLs and exact-moment playback work together. The UI uses the same shared moment parser as that route. Neither the timeline nor moment links change archived data or expose unfinished games. Public-only chat remains the default; replay whisper visibility controls are unchanged.
 
 ## Local checks
 
