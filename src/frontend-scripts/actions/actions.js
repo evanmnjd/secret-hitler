@@ -104,7 +104,8 @@ export const loadReplay = (summary) => ({
   summary,
 });
 
-export const fetchReplay = (gameId) => ({
+export const fetchReplay = (gameId, moment = null) => ({
   type: "FETCH_REPLAY",
   gameId,
+  moment,
 });

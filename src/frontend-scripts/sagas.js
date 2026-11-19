@@ -2,6 +2,7 @@ import { put, call, takeLatest } from "redux-saga/effects";
 import buildEnhancedGameSummary from "../../models/game-summary/buildEnhancedGameSummary";
 import buildReplay from "./replay/buildReplay";
 import { updateMidsection } from "./actions/actions";
+import { resolveReplayMoment } from "../shared/replay-moment";
 
 function* fetchProfile(action) {
   const { username } = action;
@@ -24,12 +25,16 @@ function* closeReplay() {
 
 function* loadReplay(action) {
   const { summary } = action;
+  try {
+    const game = buildEnhancedGameSummary(summary);
+    const replay = buildReplay(game);
+    const position = resolveReplayMoment(replay, action.moment);
 
-  const game = buildEnhancedGameSummary(summary);
-  const replay = buildReplay(game);
-
-  yield put({ type: "RECEIVE_REPLAY", replay, game });
-  yield put(updateMidsection("replay"));
+    yield put({ type: "RECEIVE_REPLAY", replay, game, position });
+    yield put(updateMidsection("replay"));
+  } catch (error) {
+    yield put({ type: "REPLAY_FAILED", error: { kind: "moment", message: error.message }, gameId: summary?._id });
+  }
 }
 
 function* fetchReplay(action) {
@@ -39,9 +44,9 @@ function* fetchReplay(action) {
   yield put(updateMidsection("replay"));
 
   try {
-    const response = yield call(fetch, `/gameSummary?id=${gameId}`);
+    const response = yield call(fetch, `/gameSummary?id=${encodeURIComponent(gameId)}`);
     const summary = yield call([response, "json"]);
-    yield put({ type: "LOAD_REPLAY", summary });
+    yield put({ type: "LOAD_REPLAY", summary, moment: action.moment });
   } catch (err) {
     yield put({ type: "REPLAY_NOT_FOUND" });
   }

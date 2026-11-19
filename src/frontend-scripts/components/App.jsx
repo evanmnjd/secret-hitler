@@ -22,6 +22,7 @@ import Menu from "./menu/Menu.jsx";
 import DevHelpers from "./DevHelpers.jsx";
 import "../../scss/style-dark.scss";
 import Swal from "sweetalert2";
+import { parseReplayLocation } from "../../shared/replay-moment";
 
 const select = (state) => state;
 
@@ -401,8 +402,14 @@ export class App extends React.Component {
     if (hash.substr(0, 10) === "#/profile/") {
       dispatch(fetchProfile(hash.split("#/profile/")[1], userInfo.userName));
     } else if (hash.substr(0, 9) === "#/replay/") {
-      updateStatus("replay", hash.split("#/replay/")[1]);
-      dispatch(fetchReplay(hash.split("#/replay/")[1]));
+      try {
+        const { uid, moment } = parseReplayLocation(hash.slice(9));
+        updateStatus("replay", uid);
+        dispatch(fetchReplay(uid, moment));
+      } catch (error) {
+        dispatch(updateMidsection("replay"));
+        dispatch({ type: "REPLAY_FAILED", error: { kind: "moment", message: error.message } });
+      }
     } else if (hash === "#/changelog") {
       dispatch(updateMidsection("changelog"));
     } else if (hash === "#/moderation" && userInfo.staffRole && userInfo.staffRole !== "altmod") {
