@@ -46,9 +46,10 @@ module.exports.handleSubscribeModChat = (socket, passport, game) => {
  * @param {object} socket - socket reference.
  * @param {object} passport - socket authentication.
  * @param {object} game - game reference.
- * @param {string} modUserName - freezing Moderator's username
  */
-module.exports.handleGameFreeze = (socket, passport, game, modUserName) => {
+module.exports.handleGameFreeze = (socket, passport, game) => {
+  const modUserName = passport?.user;
+  if (typeof modUserName !== "string" || !modUserName) return;
   const gameToFreeze = game;
 
   if (gameToFreeze && gameToFreeze.private && gameToFreeze.private.seatedPlayers) {
@@ -115,9 +116,10 @@ module.exports.handleGameFreeze = (socket, passport, game, modUserName) => {
  * @param {object} socket - socket reference.
  * @param {object} passport - socket authentication.
  * @param {object} game - game reference.
- * @param {string} modUserName - requesting Moderator's username
  */
-module.exports.handleModPeekVotes = (socket, passport, game, modUserName) => {
+module.exports.handleModPeekVotes = (socket, passport, game) => {
+  const modUserName = passport?.user;
+  if (typeof modUserName !== "string" || !modUserName) return;
   const gameToPeek = game;
   let output = '<table class="fullTable"><tr><th>Seat</th><th>Role</th><th>Vote</th></tr>';
 
@@ -195,9 +197,10 @@ module.exports.handleModPeekVotes = (socket, passport, game, modUserName) => {
  * @param {object} socket - socket reference.
  * @param {object} passport - socket authentication.
  * @param {object} game - game reference.
- * @param {string} modUserName - requesting Moderator's username
  */
-module.exports.handleModPeekRemakes = (socket, passport, game, modUserName) => {
+module.exports.handleModPeekRemakes = (socket, passport, game) => {
+  const modUserName = passport?.user;
+  if (typeof modUserName !== "string" || !modUserName) return;
   const gameToPeek = game;
   let output =
     '<table class="fullTable"><tr><th>Seat</th><th>Role</th><th>Time since last voted to remake</th><th>Currently voting to remake?</th><th>Times voted to remake</th></tr>';

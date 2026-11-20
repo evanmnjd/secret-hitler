@@ -90,6 +90,26 @@ describe("connection initialization", () => {
     expect(userList).toEqual([{ userName: "Ada" }]);
   });
 
+  it("closes the replaced transport while retaining the replacement's presence", () => {
+    userList.push({ userName: "Ada" });
+    const previous = {
+      id: "previous",
+      handshake: { session: { passport: { user: "Ada" } } },
+      emit: jest.fn(),
+      disconnect: jest.fn(() => {
+        handleSocketDisconnect(previous);
+        delete global.io.sockets.sockets.previous;
+      }),
+    };
+    global.io.sockets.sockets.previous = previous;
+    checkUserStatus(socket, jest.fn());
+    expect(previous._replacedBySocketId).toBe(socket.id);
+    expect(previous.disconnect).toHaveBeenCalledWith(true);
+    expect(userList).toEqual([{ userName: "Ada" }]);
+    expect(global.io.sockets.sockets[socket.id]).toBe(socket);
+    expect(global.io.sockets.sockets.previous).toBeUndefined();
+  });
+
   it.each([
     "disconnected",
     "_replacedBySocketId",

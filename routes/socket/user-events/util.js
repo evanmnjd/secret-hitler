@@ -32,9 +32,11 @@ module.exports.checkUserStatus = (socket, callback) => {
     if (oldSocketID && sockets[oldSocketID]) {
       // The replacement owns presence now; a delayed disconnect from this socket must not remove the
       // new tab from userList or mark its in-progress game seat disconnected.
-      sockets[oldSocketID]._replacedBySocketId = socket.id;
-      sockets[oldSocketID].emit("manualDisconnection");
-      delete sockets[oldSocketID];
+      const previousSocket = sockets[oldSocketID];
+      previousSocket._replacedBySocketId = socket.id;
+      previousSocket.emit("manualDisconnection");
+      // Close the old transport as well as its UI. Socket.IO owns removal from its registry.
+      previousSocket.disconnect(true);
     }
 
     const reconnectingUser = game ? game.publicPlayersState.find((player) => player.userName === user) : undefined;
