@@ -10,6 +10,7 @@ import { PLAYERCOLORS, getBadWord, getNumberWithOrdinal } from "../../constants"
 import { renderEmotesButton, processEmotes } from "../../emotes";
 import Swal from "sweetalert2";
 import NeighborChatReport from "../reusable/NeighborChatReport";
+import VoteResult from "../reusable/VoteResult";
 
 const mapDispatchToProps = (dispatch) => ({
   loadReplay: (summary) => dispatch(loadReplay(summary)),
@@ -830,6 +831,8 @@ class Gamechat extends React.Component {
           playerListPlayer.staffRole !== "altmod" &&
           playerListPlayer.staffRole !== "veteran";
         const chatContents = processEmotes(chat.chat, isMod, this.props.allEmotes);
+        const isVoteResult =
+          chat.gameChat && Array.isArray(chat.chat) && chat.chat.some((segment) => segment.type === "vote-result");
         const isSeated = seatedUserNames.includes(chat.userName);
         const isGreenText = chatContents && chatContents[0] ? /^>/i.test(chatContents[0]) : false;
         const canSeeIncognito =
@@ -841,12 +844,13 @@ class Gamechat extends React.Component {
         acc.push(
           chat.gameChat ? (
             <div
-              className={chat.chat[1] && chat.chat[1].type ? `item game-chat ${chat.chat[1].type}` : "item game-chat"}
+              className={`${chat.chat[1] && chat.chat[1].type ? `item game-chat ${chat.chat[1].type}` : "item game-chat"}${isVoteResult ? " vote-result-chat" : ""}`}
               key={i}
             >
               {this.handleTimestamps(chat.timestamp)}
               <span className="game-chat">
                 {chatContents.map((chatSegment, index) => {
+                  if (chatSegment.type === "vote-result") return <VoteResult key={index} segment={chatSegment} />;
                   if (chatSegment.type) {
                     const classes = getClassesFromType(chatSegment.type);
 

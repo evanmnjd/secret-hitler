@@ -49,6 +49,58 @@
 	color: var(--theme-text-1);
 }
 
+// Keep vote cards in the same columns even when chat timestamps are enabled.
+.ui.list > .item.vote-result-chat {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	column-gap: 6px;
+	> .game-chat {
+		order: 0;
+		flex: 1 1 auto;
+		min-width: 0;
+		max-width: 100% !important;
+	}
+	> .chat-timestamp {
+		order: 1;
+		flex: 0 0 auto;
+		font-size: 10px;
+	}
+}
+
+.vote-result {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px 6px;
+	max-width: 100% !important;
+	font-size: 12px;
+	line-height: 22px;
+	vertical-align: middle;
+	.vote-result-label {
+		flex: 0 0 36px;
+	}
+	.vote-result-cards {
+		display: inline-grid;
+		grid-auto-flow: column;
+		grid-auto-columns: 20px;
+		column-gap: 2px;
+		align-items: center;
+		flex: 0 0 auto;
+		max-width: none !important;
+		img {
+			display: block;
+			width: 20px;
+			height: 20px;
+			object-fit: contain;
+		}
+	}
+	.vote-result-counts {
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
+	}
+}
+
 .swal2-popup {
 	background-color: var(--theme-background-2) !important;
 	background: var(--theme-background-2) !important;

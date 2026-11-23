@@ -6,6 +6,7 @@ import { loadReplay, updateUser } from "../../../actions/actions";
 import { processEmotes } from "../../../emotes";
 import { PLAYERCOLORS } from "../../../constants";
 import NeighborChatReport from "../../reusable/NeighborChatReport";
+import VoteResult from "../../reusable/VoteResult";
 import { isReplayWhisper } from "../../../replay/chat";
 
 const mapDispatchToProps = (dispatch) => ({
@@ -226,6 +227,8 @@ export class ReplayGamechat extends React.Component {
           playerListPlayer.staffRole !== "altmod" &&
           playerListPlayer.staffRole !== "veteran";
         const chatContents = processEmotes(chat.chat, isMod, this.props.allEmotes);
+        const isVoteResult =
+          chat.gameChat && Array.isArray(chat.chat) && chat.chat.some((segment) => segment.type === "vote-result");
         const isSeated = seatedUserNames.includes(chat.userName);
         const isGreenText = chatContents && chatContents[0] ? /^>/i.test(chatContents[0]) : false;
         if (isReplayWhisper(chat)) {
@@ -269,12 +272,13 @@ export class ReplayGamechat extends React.Component {
         acc.push(
           chat.gameChat ? (
             <div
-              className={chat.chat[1] && chat.chat[1].type ? `item game-chat ${chat.chat[1].type}` : "item game-chat"}
+              className={`${chat.chat[1] && chat.chat[1].type ? `item game-chat ${chat.chat[1].type}` : "item game-chat"}${isVoteResult ? " vote-result-chat" : ""}`}
               key={i}
             >
               {this.handleTimestamps(chat.timestamp)}
               <span className="game-chat">
                 {chatContents.map((chatSegment, index) => {
+                  if (chatSegment.type === "vote-result") return <VoteResult key={index} segment={chatSegment} />;
                   if (chatSegment.type) {
                     const classes = this.getClassesFromType(chatSegment.type);
 

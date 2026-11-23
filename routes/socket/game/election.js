@@ -1809,7 +1809,14 @@ module.exports.selectVoting = (passport, game, data, socket, force = false) => {
       const tallyChat = {
         timestamp: new Date(),
         gameChat: true,
-        chat: [{ text: `Vote result: ${livingJa} Ja · ${livingNein} Nein` }],
+        chat: [
+          {
+            text: `Vote result: ${livingJa} Ja · ${livingNein} Nein`,
+            type: "vote-result",
+            ja: livingJa,
+            nein: livingNein,
+          },
+        ],
       };
       // Intentionally ungated, unlike the pass/fail chats below (which are guarded by
       // !experiencedMode / !disableGamechat): with no ballot cards to flip, this tally is the only
@@ -1956,9 +1963,9 @@ module.exports.selectVoting = (passport, game, data, socket, force = false) => {
             });
 
             game.private.unSeatedGameChats.push(chat);
-            game.gameState.pendingChancellorIndex = null;
           }
 
+          game.gameState.pendingChancellorIndex = null;
           failedElection();
         }
 
