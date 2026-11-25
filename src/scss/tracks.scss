@@ -325,6 +325,23 @@
 .cardflinger-card-container.middle-right.active {
 	left: 60% !important;
 }
+.cardflinger-container.voting {
+	.cardflinger-card-container.middle-left.active {
+		left: 10% !important;
+	}
+	.cardflinger-card-container.middle-right.active {
+		left: 70% !important;
+	}
+	@media (max-width: 400px) {
+		.help-message {
+			top: 45px;
+			font-size: 18px;
+			.secondary-message {
+				font-size: 12px;
+			}
+		}
+	}
+}
 .cardflinger-card.ballot {
 	background-image: url('../../public/images/cards/ballot-l.png');
 }

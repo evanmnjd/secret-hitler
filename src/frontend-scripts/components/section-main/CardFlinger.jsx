@@ -249,7 +249,7 @@ class CardFlinger extends React.Component {
     };
 
     return (
-      <section className="cardflinger-container">
+      <section className={`cardflinger-container${this.props.gameInfo.gameState.phase === "voting" ? " voting" : ""}`}>
         {renderHelpMessage()}
         {positions.map((position, i) => {
           const stateObj = cardFlingerState.find((flinger) => flinger.position === position);
